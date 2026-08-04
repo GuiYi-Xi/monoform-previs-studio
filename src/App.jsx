@@ -11,7 +11,8 @@ import { JOINT_DEFINITIONS, JOINT_GROUPS, RIG_PRESET_GROUPS, RIG_PRESET_OPTIONS,
 const FPS = 24
 const TOTAL_FRAMES = 120
 const CAMERA_ID = '__shot_camera__'
-const PROJECT_STORAGE_KEY = 'stageframe-project'
+const PROJECT_STORAGE_KEY = 'monoform-project'
+const LEGACY_PROJECT_STORAGE_KEY = 'stageframe-project'
 const PROJECT_VERSION = 7
 const BRAND_MARK_URL = `${import.meta.env.BASE_URL}branding/monoform-mark.png`
 const ASPECT_RATIOS = [
@@ -93,8 +94,12 @@ function normalizeObjectTracks(tracks = {}) {
 
 function readCachedProject() {
   try {
-    const data = JSON.parse(localStorage.getItem(PROJECT_STORAGE_KEY) || 'null')
+    const current = localStorage.getItem(PROJECT_STORAGE_KEY)
+    const legacy = current ? null : localStorage.getItem(LEGACY_PROJECT_STORAGE_KEY)
+    const serialized = current || legacy
+    const data = JSON.parse(serialized || 'null')
     if (!data || !Array.isArray(data.objects)) return null
+    if (!current && legacy) localStorage.setItem(PROJECT_STORAGE_KEY, legacy)
     const tracks = data.objectKeyframes || data.characterKeyframes || {}
     return { ...data, objects: data.objects.map(normalizePerson), objectKeyframes: normalizeObjectTracks(tracks) }
   } catch {
@@ -279,7 +284,7 @@ function LeftSidebar({ objects, selectedId, onSelect, onAddPerson, onAddPrimitiv
           </div>
           <div className="section-kicker section-gap">外部模型</div>
           <button className="import-drop" onClick={() => inputRef.current?.click()}>
-            <Import size={18} /><strong>导入 GLB / GLTF</strong><span>加入网上下载的白模</span>
+            <Import size={18} /><strong>导入 GLB / GLTF</strong><span>导入本地三维模型</span>
           </button>
           <input ref={inputRef} className="visually-hidden" type="file" accept=".glb,.gltf" onChange={onImport} />
         </div>
@@ -333,7 +338,7 @@ function Inspector({ selected, camera, selectedJoint, onSelectJoint, onUpdateObj
           <div className="inspector-section">
             <div className="section-title"><span>人物</span><ChevronDown size={14} /></div>
             <label className="select-field"><span>体型</span><select value={selected.bodyType} onChange={e => onUpdateObject({ bodyType: e.target.value })}><option value="standard">中性人体</option><option value="female">女性人体</option><option value="male">男性人体</option><option value="tall">修长人体</option><option value="broad">宽体人体</option></select></label>
-            <label className="select-field"><span>官方动作</span><select value={normalizePoseId(selected.pose)} onChange={e => applyPreset(e.target.value)}>{RIG_PRESET_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+            <label className="select-field"><span>动作预设</span><select value={normalizePoseId(selected.pose)} onChange={e => applyPreset(e.target.value)}>{RIG_PRESET_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <label className="range-field pose-time-field"><span>动作相位</span><input type="range" min="0" max="1" step="0.01" value={Number.isFinite(selected.poseTime) ? selected.poseTime : presetPhase(selected.pose)} onChange={e => onUpdateObject({ poseTime: Number(e.target.value) })} /><output>{Math.round((Number.isFinite(selected.poseTime) ? selected.poseTime : presetPhase(selected.pose)) * 100)}%</output></label>
             <p className="pose-source-note">动作来源：Three.js 官方 X-Bot 骨骼动画。当前模型没有面部骨骼或表情，只提供身体、头颈和四肢动作。</p>
             <div className="pose-library">
@@ -721,18 +726,21 @@ export default function App() {
       return next
     })
   }
-  const saveProject = () => {
+  const saveProject = ({ download = false } = {}) => {
     const data = projectData({ objects, camera, keyframes, objectKeyframes: characterKeyframes })
     const serialized = JSON.stringify(data)
     let cached = true
     try { localStorage.setItem(PROJECT_STORAGE_KEY, serialized) } catch { cached = false }
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(blob)
-    link.download = 'monoform-project.json'
-    link.click()
-    URL.revokeObjectURL(link.href)
-    setToast(cached ? '工程已保存' : '工程已导出 · 深度图较大，未写入浏览器缓存')
+    if (download) {
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const link = document.createElement('a')
+      link.href = URL.createObjectURL(blob)
+      link.download = 'monoform-project.json'
+      link.click()
+      URL.revokeObjectURL(link.href)
+    }
+    if (download) setToast(cached ? '工程 JSON 已导出' : '工程已导出，但浏览器自动保存空间不足')
+    else setToast(cached ? '工程已保存到浏览器' : '浏览器保存空间不足，请使用“导出工程”备份')
   }
   const handleCaptureImage = async () => {
     if (exporting || capturingImage) return
@@ -886,7 +894,7 @@ export default function App() {
         <nav className="top-actions">
           <button onClick={resetProject}><Plus size={14} /> 新建</button>
           <button onClick={() => loadRef.current?.click()}><FolderOpen size={14} /> 打开</button>
-          <button onClick={saveProject}><Save size={14} /> 保存</button>
+          <button onClick={() => saveProject()}><Save size={14} /> 保存</button>
           <input ref={loadRef} className="visually-hidden" type="file" accept=".json" onChange={loadProject} />
           <span className="top-divider" />
           <ToolButton icon={Undo2} label="撤销" shortcut="Ctrl+Z" onClick={undo} disabled={!historyRef.current.past.length} />
@@ -894,7 +902,7 @@ export default function App() {
         </nav>
         <div className="project-title"><i className={`status-dot ${saveStatus === '保存中…' ? '' : 'live'}`} /><span>未命名场景</span><small>{saveStatus}</small></div>
         <div className="export-actions">
-          <button className="project-export-button" onClick={saveProject} disabled={exporting || capturingImage}><Download size={14} /> 导出工程</button>
+          <button className="project-export-button" onClick={() => saveProject({ download: true })} disabled={exporting || capturingImage}><Download size={14} /> 导出工程</button>
           <button className="project-export-button capture-image-button" onClick={handleCaptureImage} disabled={exporting || capturingImage}><FileImage size={14} /> {capturingImage ? '截图中…' : '截图 PNG'}</button>
           <button className="export-button" onClick={handleExportMp4} disabled={exporting || capturingImage}><FileVideo2 size={14} /> {exporting ? `${exportProgress}%` : '导出 MP4'}</button>
         </div>
@@ -920,11 +928,11 @@ export default function App() {
             <button className={showGrid ? 'is-active' : ''} onClick={() => setShowGrid(value => !value)}><Grid3X3 size={14} /> 网格</button>
             <button><span className="solid-sphere" /> 实体</button>
           </div>
-          <div className="viewport-label"><strong>透视视图</strong><span>毫米 · 世界坐标</span></div>
+          <div className="viewport-label"><strong>透视视图</strong><span>场景单位 · 世界坐标</span></div>
           <MainViewport objects={animatedObjects} selectedId={selectedId} activeJoint={selectedJoint} onSelect={setSelectedId} onJointSelect={(objectId, jointId) => { setSelectedId(objectId); setSelectedJoint(jointId) }} transformMode={transformMode} onUpdateObject={updateObjectById} cameraData={displayCamera} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} showGrid={showGrid} />
           <div className="navigation-hint"><span><MousePointer2 size={12} /> 左键选择</span><span>中键旋转视角</span><span>滚轮缩放</span></div>
           <div className="camera-monitor">
-            <div className="monitor-head"><div><Video size={13} /><strong>摄像机 01</strong><span>REC PREVIEW</span></div><button onClick={() => setSelectedId(CAMERA_ID)}><ZoomIn size={13} /></button></div>
+            <div className="monitor-head"><div><Video size={13} /><strong>摄像机 01</strong><span>SHOT PREVIEW</span></div><button onClick={() => setSelectedId(CAMERA_ID)}><ZoomIn size={13} /></button></div>
             <div className="monitor-frame">
               <div className={`monitor-canvas ${previewAspectClass}`} style={{ '--preview-aspect': previewAspect }}>
                 <CameraPreview objects={animatedObjects} cameraData={displayCamera} />
