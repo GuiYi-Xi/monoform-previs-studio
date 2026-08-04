@@ -260,6 +260,21 @@ function dominantBoneNameFromHit(event) {
   return skeleton.bones[bestIndex]?.name || null
 }
 
+const IK_CHAINS = {
+  mixamorigLeftHand: ['mixamorigLeftForeArm', 'mixamorigLeftArm'],
+  mixamorigRightHand: ['mixamorigRightForeArm', 'mixamorigRightArm'],
+  mixamorigLeftFoot: ['mixamorigLeftLeg', 'mixamorigLeftUpLeg'],
+  mixamorigRightFoot: ['mixamorigRightLeg', 'mixamorigRightUpLeg'],
+}
+
+function ikEffectorForJoint(jointId = '') {
+  if (jointId.startsWith('mixamorigLeftHand')) return 'mixamorigLeftHand'
+  if (jointId.startsWith('mixamorigRightHand')) return 'mixamorigRightHand'
+  if (jointId.startsWith('mixamorigLeftFoot') || jointId.startsWith('mixamorigLeftToe')) return 'mixamorigLeftFoot'
+  if (jointId.startsWith('mixamorigRightFoot') || jointId.startsWith('mixamorigRightToe')) return 'mixamorigRightFoot'
+  return null
+}
+
 function MixamoJointMarker({ bone, jointId, selected, modelRoot, onSelectJoint, onBeginDrag, onDrag, onEndDrag }) {
   const markerRef = useRef(null)
   const worldPosition = useMemo(() => new THREE.Vector3(), [])
@@ -290,9 +305,43 @@ function MixamoJointMarker({ bone, jointId, selected, modelRoot, onSelectJoint, 
   )
 }
 
-function MixamoPersonModel({ bodyType = 'standard', pose = 'idle', poseTime, rigRoot, joints, color = '#e8e3d8', selected = false, selectedJoint, onSelectJoint, onRotateJoint, showBoneGizmo = false, onSurfacePointerDown, onSurfacePointerMove, onSurfacePointerUp }) {
+function MixamoIKHandle({ bone, jointId, selected, modelRoot, onBeginDrag, onDrag, onEndDrag }) {
+  const markerRef = useRef(null)
+  const worldPosition = useMemo(() => new THREE.Vector3(), [])
+  useFrame(() => {
+    if (!bone || !markerRef.current || !modelRoot.current) return
+    bone.getWorldPosition(worldPosition)
+    modelRoot.current.worldToLocal(worldPosition)
+    markerRef.current.position.copy(worldPosition)
+  })
+  return (
+    <group
+      ref={markerRef}
+      onPointerDown={event => onBeginDrag?.(event, jointId)}
+      onPointerMove={onDrag}
+      onPointerUp={onEndDrag}
+      onPointerCancel={onEndDrag}
+    >
+      <mesh
+        scale={selected ? 1.18 : 1}
+        renderOrder={10}
+      >
+        <octahedronGeometry args={[0.055, 0]} />
+        <meshBasicMaterial color={selected ? '#8ee6d0' : '#55bca9'} transparent opacity={0.96} depthTest={false} />
+      </mesh>
+      <mesh renderOrder={9}>
+        <sphereGeometry args={[0.09, 12, 8]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+      </mesh>
+    </group>
+  )
+}
+
+function MixamoPersonModel({ bodyType = 'standard', pose = 'idle', poseTime, rigRoot, joints, footLock = false, color = '#e8e3d8', selected = false, selectedJoint, onSelectJoint, onRotateJoint, onRotateJoints, showBoneGizmo = false, onSurfacePointerDown, onSurfacePointerMove, onSurfacePointerUp }) {
   const gltf = useGLTF(BUILT_IN_MODEL_URL)
   const orbitControls = useThree(state => state.controls)
+  const camera = useThree(state => state.camera)
+  const viewportSize = useThree(state => state.size)
   const modelRoot = useRef(null)
   const rig = poseForObject({ pose, rigRoot, joints })
   const sampledRotations = useRef(new WeakMap())
@@ -386,7 +435,43 @@ function MixamoPersonModel({ bodyType = 'standard', pose = 'idle', poseTime, rig
     materials.forEach(material => material.dispose())
   }, [materials, mixer, scene])
 
+  const beginIKDrag = useCallback((event, jointId) => {
+    const effectorId = ikEffectorForJoint(jointId)
+    const chainIds = IK_CHAINS[effectorId]
+    const effector = bones[effectorId]
+    if (!selected || !showBoneGizmo || !onRotateJoints || !effector || !chainIds?.every(id => bones[id])) return false
+    event.stopPropagation()
+    event.nativeEvent?.stopImmediatePropagation?.()
+    event.target?.setPointerCapture?.(event.pointerId)
+    onSelectJoint?.(effectorId)
+    scene.updateMatrixWorld(true)
+    const startTarget = effector.getWorldPosition(new THREE.Vector3())
+    const distance = Math.max(0.5, camera.position.distanceTo(startTarget))
+    const fov = THREE.MathUtils.degToRad(camera.fov || 42)
+    const worldPerPixel = 2 * Math.tan(fov / 2) * distance / Math.max(1, viewportSize.height)
+    const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0).normalize()
+    const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1).normalize()
+    boneDrag.current = {
+      kind: 'ik',
+      pointerId: event.pointerId,
+      jointId: effectorId,
+      chainIds,
+      startX: event.clientX,
+      startY: event.clientY,
+      startTarget,
+      worldPerPixel,
+      right,
+      up,
+      lockHeight: footLock && effectorId.includes('Foot'),
+      startQuaternions: Object.fromEntries(chainIds.map(id => [id, bones[id].quaternion.clone()])),
+    }
+    if (orbitControls) orbitControls.enabled = false
+    document.body.style.cursor = 'grabbing'
+    return true
+  }, [bones, camera, footLock, onRotateJoints, onSelectJoint, orbitControls, scene, selected, showBoneGizmo, viewportSize.height])
+
   const beginBoneDrag = useCallback((event, jointId) => {
+    if (ikEffectorForJoint(jointId) && beginIKDrag(event, jointId)) return true
     if (!selected || !showBoneGizmo || !onRotateJoint || !bones[jointId]) return false
     event.stopPropagation()
     event.nativeEvent?.stopImmediatePropagation?.()
@@ -394,7 +479,7 @@ function MixamoPersonModel({ bodyType = 'standard', pose = 'idle', poseTime, rig
     onSelectJoint?.(jointId)
     const startRotation = rig.joints[jointId] || [0, 0, 0]
     boneDrag.current = {
-      pointerId: event.pointerId,
+      kind: 'joint', pointerId: event.pointerId,
       jointId,
       startX: event.clientX,
       startY: event.clientY,
@@ -404,12 +489,51 @@ function MixamoPersonModel({ bodyType = 'standard', pose = 'idle', poseTime, rig
     if (orbitControls) orbitControls.enabled = false
     document.body.style.cursor = 'grabbing'
     return true
-  }, [bones, onRotateJoint, onSelectJoint, orbitControls, rig.joints, selected, showBoneGizmo])
+  }, [beginIKDrag, bones, onRotateJoint, onSelectJoint, orbitControls, rig.joints, selected, showBoneGizmo])
 
   const dragBone = useCallback(event => {
     const drag = boneDrag.current
     if (!drag || event.pointerId !== drag.pointerId) return
     event.stopPropagation()
+    if (drag.kind === 'ik') {
+      for (const jointId of drag.chainIds) bones[jointId].quaternion.copy(drag.startQuaternions[jointId])
+      scene.updateMatrixWorld(true)
+      const dx = event.clientX - drag.startX
+      const dy = event.clientY - drag.startY
+      const target = drag.startTarget.clone()
+        .addScaledVector(drag.right, dx * drag.worldPerPixel)
+        .addScaledVector(drag.up, -dy * drag.worldPerPixel)
+      if (drag.lockHeight) target.y = drag.startTarget.y
+
+      const effector = bones[drag.jointId]
+      const jointPosition = new THREE.Vector3()
+      const endPosition = new THREE.Vector3()
+      const currentDirection = new THREE.Vector3()
+      const targetDirection = new THREE.Vector3()
+      const parentWorld = new THREE.Quaternion()
+      const worldDelta = new THREE.Quaternion()
+      const localDelta = new THREE.Quaternion()
+      for (let iteration = 0; iteration < 10; iteration += 1) {
+        for (const jointId of drag.chainIds) {
+          const joint = bones[jointId]
+          joint.getWorldPosition(jointPosition)
+          effector.getWorldPosition(endPosition)
+          currentDirection.copy(endPosition).sub(jointPosition)
+          targetDirection.copy(target).sub(jointPosition)
+          if (currentDirection.lengthSq() < 1e-8 || targetDirection.lengthSq() < 1e-8) continue
+          currentDirection.normalize()
+          targetDirection.normalize()
+          worldDelta.setFromUnitVectors(currentDirection, targetDirection)
+          joint.parent.getWorldQuaternion(parentWorld)
+          localDelta.copy(parentWorld).invert().multiply(worldDelta).multiply(parentWorld)
+          joint.quaternion.premultiply(localDelta).normalize()
+          scene.updateMatrixWorld(true)
+        }
+        effector.getWorldPosition(endPosition)
+        if (endPosition.distanceToSquared(target) < 0.000025) break
+      }
+      return
+    }
     const dx = event.clientX - drag.startX
     const dy = event.clientY - drag.startY
     const twist = Boolean(event.shiftKey || event.nativeEvent?.shiftKey)
@@ -433,8 +557,25 @@ function MixamoPersonModel({ bodyType = 'standard', pose = 'idle', poseTime, rig
     boneDrag.current = null
     if (orbitControls) orbitControls.enabled = true
     document.body.style.cursor = ''
-    onRotateJoint?.(drag.jointId, drag.nextRotation)
-  }, [onRotateJoint, orbitControls])
+    if (drag.kind === 'ik') {
+      const rotations = {}
+      const inverseSampled = new THREE.Quaternion()
+      const delta = new THREE.Quaternion()
+      const euler = new THREE.Euler()
+      for (const jointId of drag.chainIds) {
+        const bone = bones[jointId]
+        const sampled = sampledRotations.current.get(bone)
+        if (!sampled) continue
+        inverseSampled.copy(sampled).invert()
+        delta.copy(inverseSampled).multiply(bone.quaternion).normalize()
+        euler.setFromQuaternion(delta, 'XYZ')
+        rotations[jointId] = [euler.x, euler.y, euler.z]
+      }
+      onRotateJoints?.(rotations)
+    } else {
+      onRotateJoint?.(drag.jointId, drag.nextRotation)
+    }
+  }, [bones, onRotateJoint, onRotateJoints, orbitControls])
 
   const beginBoneDragFromSurface = useCallback(event => {
     if (!selected || !showBoneGizmo) return
@@ -482,6 +623,18 @@ function MixamoPersonModel({ bodyType = 'standard', pose = 'idle', poseTime, rig
             modelRoot={modelRoot}
             onSelectJoint={onSelectJoint}
             onBeginDrag={beginBoneDrag}
+            onDrag={dragBone}
+            onEndDrag={endBoneDrag}
+          />
+        ))}
+        {selected && showBoneGizmo && Object.keys(IK_CHAINS).map(jointId => (
+          <MixamoIKHandle
+            key={`ik-${jointId}`}
+            bone={bones[jointId]}
+            jointId={jointId}
+            selected={selectedJoint === jointId}
+            modelRoot={modelRoot}
+            onBeginDrag={beginIKDrag}
             onDrag={dragBone}
             onEndDrag={endBoneDrag}
           />
@@ -774,6 +927,7 @@ function SceneObject({ data, selected, activeJoint, transformMode, onSelect, onU
   const beginObjectInteraction = useCallback(event => {
     event.stopPropagation()
     onSelect(data.id)
+    if (data.locked) return
     if (!selected || transformMode !== 'rotate' || !groupRef.current) return
     event.nativeEvent?.stopImmediatePropagation?.()
     event.target?.setPointerCapture?.(event.pointerId)
@@ -785,7 +939,7 @@ function SceneObject({ data, selected, activeJoint, transformMode, onSelect, onU
     }
     if (orbitControls) orbitControls.enabled = false
     document.body.style.cursor = 'grabbing'
-  }, [data.id, onSelect, orbitControls, selected, transformMode])
+  }, [data.id, data.locked, onSelect, orbitControls, selected, transformMode])
   const rotateObjectFromSurface = useCallback(event => {
     const drag = objectRotateDrag.current
     const object = groupRef.current
@@ -835,6 +989,7 @@ function SceneObject({ data, selected, activeJoint, transformMode, onSelect, onU
           poseTime={data.poseTime}
           rigRoot={data.rigRoot}
           joints={data.joints}
+          footLock={data.footLock}
           color={data.color}
           selected={selected}
           selectedJoint={activeJoint}
@@ -842,6 +997,9 @@ function SceneObject({ data, selected, activeJoint, transformMode, onSelect, onU
           onSelectJoint={jointId => onJointSelect?.(data.id, jointId)}
           onRotateJoint={(jointId, rotation) => onUpdate(data.id, {
             joints: { ...(data.joints || {}), [jointId]: rotation },
+          })}
+          onRotateJoints={rotations => onUpdate(data.id, {
+            joints: { ...(data.joints || {}), ...rotations },
           })}
           onSurfacePointerDown={beginObjectInteraction}
           onSurfacePointerMove={rotateObjectFromSurface}
@@ -860,7 +1018,7 @@ function SceneObject({ data, selected, activeJoint, transformMode, onSelect, onU
   return (
     <>
       {content}
-      {selected && !preview && transformMode !== 'select' && !(data.type === 'person' && transformMode === 'rotate') && (
+      {selected && !data.locked && !preview && transformMode !== 'select' && !(data.type === 'person' && transformMode === 'rotate') && (
         <TransformControls
           object={groupRef}
           mode={transformMode}
@@ -947,7 +1105,22 @@ function Ground({ showGrid = true }) {
   )
 }
 
-function EditorScene({ objects, selectedId, activeJoint, onSelect, onJointSelect, transformMode, onUpdateObject, cameraData, onUpdateCamera, showGrid }) {
+function ViewFocusController({ request }) {
+  const { camera, controls } = useThree()
+  useEffect(() => {
+    if (!request || !controls) return
+    const target = new THREE.Vector3(...request.position)
+    target.y += request.height || 0
+    const direction = camera.position.clone().sub(controls.target).normalize()
+    if (!Number.isFinite(direction.x) || direction.lengthSq() < 0.001) direction.set(1, 0.65, 1).normalize()
+    controls.target.copy(target)
+    camera.position.copy(target).addScaledVector(direction, request.distance || 5)
+    controls.update()
+  }, [camera, controls, request])
+  return null
+}
+
+function EditorScene({ objects, selectedId, activeJoint, onSelect, onJointSelect, transformMode, onUpdateObject, cameraData, onUpdateCamera, showGrid, focusRequest }) {
   return (
     <>
       <color attach="background" args={['#555653']} />
@@ -958,6 +1131,7 @@ function EditorScene({ objects, selectedId, activeJoint, onSelect, onJointSelect
       <CameraModel data={cameraData} selected={selectedId === CAMERA_ID} transformMode={transformMode} onSelect={onSelect} onUpdate={onUpdateCamera} />
       <ContactShadows position={[0, 0.01, 0]} opacity={0.42} scale={18} blur={2.4} far={9} />
       <OrbitControls makeDefault target={[0, 1, 0]} minDistance={2} maxDistance={35} maxPolarAngle={Math.PI * 0.49} />
+      <ViewFocusController request={focusRequest} />
     </>
   )
 }

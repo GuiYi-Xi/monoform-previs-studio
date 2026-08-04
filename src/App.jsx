@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Box, BoxSelect, Camera, ChevronDown, CircleDot, Copy, Download,
-  FileImage, FileVideo2, FolderOpen, Grid3X3, Import, MousePointer2, Move3D, Pause, Play, Plus,
+  FileImage, FileVideo2, Focus, FolderOpen, Grid3X3, Import, Lock, MousePointer2, Move3D, Pause, Play, Plus,
   Redo2, RotateCw, Save, Settings2, SkipBack, SkipForward, Sparkles,
   ScanLine, Trash2, Undo2, UserRound, Video, ZoomIn,
+  Unlock,
 } from 'lucide-react'
 import { MainViewport, CameraPreview } from './Viewport.jsx'
 import { JOINT_DEFINITIONS, JOINT_GROUPS, RIG_PRESET_GROUPS, RIG_PRESET_OPTIONS, cloneJointPose, interpolateJointPose, normalizePoseId, poseForObject, presetJoints, presetPhase, presetRoot } from './rig.js'
@@ -13,7 +14,8 @@ const TOTAL_FRAMES = 120
 const CAMERA_ID = '__shot_camera__'
 const PROJECT_STORAGE_KEY = 'monoform-project'
 const LEGACY_PROJECT_STORAGE_KEY = 'stageframe-project'
-const PROJECT_VERSION = 7
+const CUSTOM_POSE_STORAGE_KEY = 'monoform-custom-poses'
+const PROJECT_VERSION = 8
 const BRAND_MARK_URL = `${import.meta.env.BASE_URL}branding/monoform-mark.png`
 const ASPECT_RATIOS = [
   { value: '16:9', label: '16 : 9 · 横屏视频', ratio: 16 / 9 },
@@ -66,6 +68,9 @@ const degToRad = value => Number(value || 0) * Math.PI / 180
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value))
 const lerp = (a, b, t) => a + (b - a) * t
 const ease = t => t * t * (3 - 2 * t)
+const normalizeInterpolation = value => ['smooth', 'linear', 'hold'].includes(value) ? value : 'smooth'
+const segmentAmount = (key, amount) => key?.interpolation === 'hold' ? 0 : key?.interpolation === 'linear' ? amount : ease(amount)
+const normalizeKeyframes = keys => (keys || []).map(key => ({ ...key, interpolation: normalizeInterpolation(key.interpolation) }))
 
 function normalizePerson(object) {
   if (object?.type !== 'person') return object
@@ -76,6 +81,23 @@ function normalizePerson(object) {
     poseTime: Number.isFinite(object.poseTime) ? object.poseTime : presetPhase(pose),
     rigRoot: [0, 0, 0],
     joints: cloneJointPose(object.joints),
+    footLock: Boolean(object.footLock),
+  }
+}
+
+function readCustomPoses() {
+  try {
+    const poses = JSON.parse(localStorage.getItem(CUSTOM_POSE_STORAGE_KEY) || '[]')
+    if (!Array.isArray(poses)) return []
+    return poses.filter(pose => pose?.id && pose?.name).map(pose => ({
+      ...pose,
+      pose: normalizePoseId(pose.pose),
+      poseTime: Number.isFinite(pose.poseTime) ? pose.poseTime : presetPhase(pose.pose),
+      rigRoot: Array.isArray(pose.rigRoot) ? pose.rigRoot.slice(0, 3) : presetRoot(),
+      joints: cloneJointPose(pose.joints),
+    }))
+  } catch {
+    return []
   }
 }
 
@@ -84,6 +106,7 @@ function normalizeObjectTracks(tracks = {}) {
     const pose = normalizePoseId(key.pose)
     return {
       ...key,
+      interpolation: normalizeInterpolation(key.interpolation),
       pose,
       poseTime: Number.isFinite(key.poseTime) ? key.poseTime : presetPhase(pose),
       rigRoot: [0, 0, 0],
@@ -101,7 +124,7 @@ function readCachedProject() {
     if (!data || !Array.isArray(data.objects)) return null
     if (!current && legacy) localStorage.setItem(PROJECT_STORAGE_KEY, legacy)
     const tracks = data.objectKeyframes || data.characterKeyframes || {}
-    return { ...data, objects: data.objects.map(normalizePerson), objectKeyframes: normalizeObjectTracks(tracks) }
+    return { ...data, objects: data.objects.map(normalizePerson), keyframes: normalizeKeyframes(data.keyframes), objectKeyframes: normalizeObjectTracks(tracks) }
   } catch {
     return null
   }
@@ -120,12 +143,14 @@ function projectData({ objects, camera, keyframes, objectKeyframes }) {
 function cameraAtFrame(keyframes, frame, aspectRatio = '16:9') {
   const sorted = [...keyframes].sort((a, b) => a.frame - b.frame)
   if (!sorted.length) return { ...initialCamera, aspectRatio }
+  const exact = sorted.find(key => key.frame === frame)
+  if (exact) return { ...exact, aspectRatio }
   if (frame <= sorted[0].frame) return { ...sorted[0], aspectRatio }
   if (frame >= sorted.at(-1).frame) return { ...sorted.at(-1), aspectRatio }
   const rightIndex = sorted.findIndex(key => key.frame >= frame)
   const left = sorted[rightIndex - 1]
   const right = sorted[rightIndex]
-  const t = ease((frame - left.frame) / Math.max(1, right.frame - left.frame))
+  const t = segmentAmount(left, (frame - left.frame) / Math.max(1, right.frame - left.frame))
   return {
     position: left.position.map((value, index) => lerp(value, right.position[index], t)),
     target: left.target.map((value, index) => lerp(value, right.target[index], t)),
@@ -138,6 +163,7 @@ function objectKeyframeFromObject(object, frame) {
   const rig = poseForObject(object)
   return {
     frame,
+    interpolation: 'smooth',
     position: [...object.position],
     rotation: [...object.rotation],
     scale: [...object.scale],
@@ -161,12 +187,14 @@ function objectAtFrame(object, keyframes = [], frame) {
     rigRoot: [...(key.rigRoot || poseForObject({ ...object, pose: key.pose || object.pose }).root)],
     joints: cloneJointPose(key.joints || poseForObject({ ...object, pose: key.pose || object.pose }).joints),
   })
+  const exact = sorted.find(key => key.frame === frame)
+  if (exact) return applyKey(exact)
   if (frame <= sorted[0].frame) return applyKey(sorted[0])
   if (frame >= sorted.at(-1).frame) return applyKey(sorted.at(-1))
   const rightIndex = sorted.findIndex(key => key.frame >= frame)
   const left = sorted[rightIndex - 1]
   const right = sorted[rightIndex]
-  const t = ease((frame - left.frame) / Math.max(1, right.frame - left.frame))
+  const t = segmentAmount(left, (frame - left.frame) / Math.max(1, right.frame - left.frame))
   const leftRoot = left.rigRoot || poseForObject({ ...object, pose: left.pose || object.pose }).root
   const rightRoot = right.rigRoot || poseForObject({ ...object, pose: right.pose || object.pose }).root
   const leftPoseTime = Number.isFinite(left.poseTime) ? left.poseTime : presetPhase(left.pose || object.pose)
@@ -203,16 +231,16 @@ function ToolButton({ icon: Icon, active, label, onClick, disabled = false, shor
   )
 }
 
-function NumberField({ label, value, onChange, accent }) {
+function NumberField({ label, value, onChange, accent, disabled = false }) {
   return (
     <label className="number-field">
       <span style={{ color: accent }}>{label}</span>
-      <input type="number" step="0.1" value={Number(value.toFixed?.(2) ?? value)} onChange={event => onChange(Number(event.target.value))} />
+      <input type="number" step="0.1" value={Number(value.toFixed?.(2) ?? value)} onChange={event => onChange(Number(event.target.value))} disabled={disabled} />
     </label>
   )
 }
 
-function VectorFields({ title, value, onChange, degrees = false }) {
+function VectorFields({ title, value, onChange, degrees = false, disabled = false }) {
   const display = degrees ? value.map(radToDeg) : value
   const update = (index, next) => {
     const copy = [...display]
@@ -223,9 +251,9 @@ function VectorFields({ title, value, onChange, degrees = false }) {
     <div className="property-group">
       <div className="property-label">{title}</div>
       <div className="vector-row">
-        <NumberField label="X" value={display[0]} onChange={value => update(0, value)} accent="#d7675b" />
-        <NumberField label="Y" value={display[1]} onChange={value => update(1, value)} accent="#76a96c" />
-        <NumberField label="Z" value={display[2]} onChange={value => update(2, value)} accent="#5d87c7" />
+        <NumberField label="X" value={display[0]} onChange={value => update(0, value)} accent="#d7675b" disabled={disabled} />
+        <NumberField label="Y" value={display[1]} onChange={value => update(1, value)} accent="#76a96c" disabled={disabled} />
+        <NumberField label="Z" value={display[2]} onChange={value => update(2, value)} accent="#5d87c7" disabled={disabled} />
       </div>
     </div>
   )
@@ -241,24 +269,25 @@ function AssetCard({ icon: Icon, title, subtitle, onClick, previewClass = '' }) 
   )
 }
 
-function SceneList({ objects, selectedId, onSelect, onToggleVisible }) {
+function SceneList({ objects, selectedId, onSelect, onToggleVisible, onToggleLock }) {
   return (
     <div className="scene-list">
-      <button className={`scene-row ${selectedId === CAMERA_ID ? 'is-selected' : ''}`} onClick={() => onSelect(CAMERA_ID)}>
+      <div className={`scene-row ${selectedId === CAMERA_ID ? 'is-selected' : ''}`} onClick={() => onSelect(CAMERA_ID)}>
         <Camera size={14} /><span>主摄像机</span><i className="status-dot live" />
-      </button>
+      </div>
       {objects.map(object => (
-        <button key={object.id} className={`scene-row ${selectedId === object.id ? 'is-selected' : ''}`} onClick={() => onSelect(object.id)}>
+        <div key={object.id} className={`scene-row ${selectedId === object.id ? 'is-selected' : ''}`} onClick={() => onSelect(object.id)}>
           {object.type === 'person' ? <UserRound size={14} /> : object.type === 'model' ? <Sparkles size={14} /> : object.type === 'depthMesh' ? <ScanLine size={14} /> : <Box size={14} />}
           <span>{object.name}</span>
-          <i className={`status-dot ${object.visible === false ? '' : 'on'}`} onClick={event => { event.stopPropagation(); onToggleVisible(object.id) }} />
-        </button>
+          <button className="scene-row-action" title={object.locked ? '解除锁定' : '锁定物体'} onClick={event => { event.stopPropagation(); onToggleLock(object.id) }}>{object.locked ? <Lock size={11} /> : <Unlock size={11} />}</button>
+          <button className="scene-row-action visibility-action" title={object.visible === false ? '显示物体' : '隐藏物体'} onClick={event => { event.stopPropagation(); onToggleVisible(object.id) }}><i className={`status-dot ${object.visible === false ? '' : 'on'}`} /></button>
+        </div>
       ))}
     </div>
   )
 }
 
-function LeftSidebar({ objects, selectedId, onSelect, onAddPerson, onAddPrimitive, onImport, onToggleVisible }) {
+function LeftSidebar({ objects, selectedId, onSelect, onAddPerson, onAddPrimitive, onImport, onToggleVisible, onToggleLock }) {
   const [tab, setTab] = useState('assets')
   const inputRef = useRef(null)
   return (
@@ -282,6 +311,12 @@ function LeftSidebar({ objects, selectedId, onSelect, onAddPerson, onAddPrimitiv
             <button onClick={() => onAddPrimitive('cylinder')}><CircleDot size={24} /><span>圆柱</span></button>
             <button onClick={() => onAddPrimitive('plane')}><Grid3X3 size={24} /><span>平面</span></button>
           </div>
+          <div className="section-kicker section-gap">场景粗模</div>
+          <div className="primitive-grid blockout-grid">
+            {[['arch', '拱门'], ['stairs', '楼梯'], ['door', '门'], ['window', '窗'], ['table', '桌子'], ['chair', '椅子'], ['sofa', '沙发'], ['roof', '屋顶'], ['tree', '树木'], ['vehicle', '车辆']].map(([type, label]) => (
+              <button key={type} onClick={() => onAddPrimitive(type)}><Box size={20} /><span>{label}</span></button>
+            ))}
+          </div>
           <div className="section-kicker section-gap">外部模型</div>
           <button className="import-drop" onClick={() => inputRef.current?.click()}>
             <Import size={18} /><strong>导入 GLB / GLTF</strong><span>导入本地三维模型</span>
@@ -289,13 +324,13 @@ function LeftSidebar({ objects, selectedId, onSelect, onAddPerson, onAddPrimitiv
           <input ref={inputRef} className="visually-hidden" type="file" accept=".glb,.gltf" onChange={onImport} />
         </div>
       ) : (
-        <SceneList objects={objects} selectedId={selectedId} onSelect={onSelect} onToggleVisible={onToggleVisible} />
+        <SceneList objects={objects} selectedId={selectedId} onSelect={onSelect} onToggleVisible={onToggleVisible} onToggleLock={onToggleLock} />
       )}
     </aside>
   )
 }
 
-function Inspector({ selected, camera, selectedJoint, onSelectJoint, onUpdateObject, onUpdateCamera, onDelete }) {
+function Inspector({ selected, camera, selectedJoint, customPoses, onSelectJoint, onUpdateObject, onUpdateCamera, onDelete, onDuplicate, onFocus, onToggleLock, onSaveCustomPose, onApplyCustomPose, onDeleteCustomPose }) {
   if (!selected) {
     return <aside className="right-sidebar panel empty-inspector"><MousePointer2 size={24} /><span>选择场景中的物体</span></aside>
   }
@@ -316,15 +351,21 @@ function Inspector({ selected, camera, selectedJoint, onSelectJoint, onUpdateObj
   return (
     <aside className="right-sidebar panel">
       <div className="inspector-head">
-        <div><small>{isCamera ? 'CAMERA' : typeLabel}</small><strong>{isCamera ? '主摄像机' : selected.name}</strong></div>
-        {!isCamera && <ToolButton icon={Trash2} label="删除" onClick={onDelete} />}
+        <div><small>{isCamera ? 'CAMERA' : typeLabel}</small>{isCamera ? <strong>主摄像机</strong> : <input className="inspector-name-input" value={selected.name} onChange={event => onUpdateObject({ name: event.target.value })} aria-label="物体名称" />}</div>
+        <div className="inspector-head-actions">
+          <ToolButton icon={Focus} label="聚焦" onClick={onFocus} />
+          {!isCamera && <ToolButton icon={selected.locked ? Unlock : Lock} label={selected.locked ? '解除锁定' : '锁定'} onClick={onToggleLock} />}
+          {!isCamera && <ToolButton icon={Copy} label="复制" onClick={onDuplicate} />}
+          {!isCamera && <ToolButton icon={Trash2} label="删除" onClick={onDelete} />}
+        </div>
       </div>
       <div className="inspector-scroll">
+        {!isCamera && selected.locked && <div className="locked-banner"><Lock size={12} /> 已锁定空间变换</div>}
         <div className="inspector-section">
           <div className="section-title"><span>变换</span><ChevronDown size={14} /></div>
-          <VectorFields title="位置" value={position} onChange={value => isCamera ? onUpdateCamera({ position: value }) : onUpdateObject({ position: value })} />
-          {!isCamera && <VectorFields title={selected.type === 'person' ? '整体旋转 · X 纵向 / Y 水平 / Z 翻滚' : '旋转'} value={selected.rotation} degrees onChange={rotation => onUpdateObject({ rotation })} />}
-          {!isCamera && <VectorFields title="缩放" value={selected.scale} onChange={scale => onUpdateObject({ scale })} />}
+          <VectorFields title="位置" value={position} onChange={value => isCamera ? onUpdateCamera({ position: value }) : onUpdateObject({ position: value })} disabled={!isCamera && selected.locked} />
+          {!isCamera && <VectorFields title={selected.type === 'person' ? '整体旋转 · X 纵向 / Y 水平 / Z 翻滚' : '旋转'} value={selected.rotation} degrees onChange={rotation => onUpdateObject({ rotation })} disabled={selected.locked} />}
+          {!isCamera && <VectorFields title="缩放" value={selected.scale} onChange={scale => onUpdateObject({ scale })} disabled={selected.locked} />}
           {isCamera && <VectorFields title="观察目标" value={camera.target} onChange={target => onUpdateCamera({ target })} />}
         </div>
         {isCamera ? (
@@ -363,7 +404,25 @@ function Inspector({ selected, camera, selectedJoint, onSelectJoint, onUpdateObj
               <VectorFields title="关节旋转" value={jointRotation} degrees onChange={updateJoint} />
               <button type="button" className="joint-reset-button" onClick={() => updateJoint([0, 0, 0])}>重置当前关节</button>
               <button type="button" className="joint-reset-button" onClick={() => onUpdateObject({ joints: presetJoints() })}>重置全部骨骼</button>
-              <p className="joint-editor-hint">按 Q 后直接按住人物部位或金色骨骼点拖动：左右拖控制局部转向，上下拖控制局部弯曲，按住 Shift 左右拖控制扭转。也可使用 X/Y/Z 数值精确调整。</p>
+              <p className="joint-editor-hint">按 Q 后拖动青绿色的手脚控制点可摆放四肢末端；拖动人物其他部位或金色骨骼点可旋转单根骨骼。按住 Shift 左右拖可调整单骨骼扭转，也可使用 X/Y/Z 数值精确调整。</p>
+              <label className="foot-lock-control">
+                <input type="checkbox" checked={Boolean(selected.footLock)} onChange={event => onUpdateObject({ footLock: event.target.checked })} />
+                <span><strong>脚底锁定</strong><small>脚部 IK 保持当前脚底高度，只沿地面拖动</small></span>
+              </label>
+            </div>
+            <div className="custom-pose-library">
+              <div className="joint-editor-head"><span>我的姿势</span><small>{customPoses.length} SAVED</small></div>
+              <button type="button" className="save-custom-pose" onClick={() => onSaveCustomPose(selected)}><Save size={12} /> 保存当前姿势</button>
+              {customPoses.length ? (
+                <div className="custom-pose-list">
+                  {customPoses.map(customPose => (
+                    <div className="custom-pose-row" key={customPose.id}>
+                      <button type="button" onClick={() => onApplyCustomPose(customPose)} title={`应用“${customPose.name}”`}>{customPose.name}</button>
+                      <button type="button" className="custom-pose-delete" onClick={() => onDeleteCustomPose(customPose.id)} title={`删除“${customPose.name}”`} aria-label={`删除“${customPose.name}”`}><Trash2 size={11} /></button>
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="custom-pose-empty">还没有保存的姿势。调整骨骼后可存入本机姿势库。</p>}
             </div>
             <label className="color-field person-color-field"><span>人物颜色</span><input type="color" value={selected.color || '#e8e3d8'} onChange={e => onUpdateObject({ color: e.target.value })} /><output>{selected.color || '#e8e3d8'}</output></label>
           </div>
@@ -378,7 +437,8 @@ function Inspector({ selected, camera, selectedJoint, onSelectJoint, onUpdateObj
   )
 }
 
-function Timeline({ currentFrame, onSeek, playing, onTogglePlay, keyframes, onAddKeyframe, onDeleteKeyframe, objectTrack, onAddObjectKeyframe, onDeleteObjectKeyframe }) {
+function Timeline({ currentFrame, onSeek, playing, onTogglePlay, keyframes, onAddKeyframe, onDeleteKeyframe, objectTrack, onAddObjectKeyframe, onDeleteObjectKeyframe, selectedKeyframe, onSelectKeyframe, onMoveKeyframe, onCopyKeyframe, onPasteKeyframe, onDeleteSelectedKeyframe, onChangeInterpolation, hasClipboard }) {
+  const [dragging, setDragging] = useState(null)
   const scrub = useCallback((event, rect) => {
     onSeek(Math.round(clamp((event.clientX - rect.left) / rect.width, 0, 1) * TOTAL_FRAMES))
   }, [onSeek])
@@ -390,11 +450,38 @@ function Timeline({ currentFrame, onSeek, playing, onTogglePlay, keyframes, onAd
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
   }
-  const renderTrack = (frames, kind, onDelete) => (
+  const beginKeyDrag = (event, key, kind, trackId) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    const rect = event.currentTarget.parentElement.getBoundingClientRect()
+    let toFrame = key.frame
+    onSeek(key.frame)
+    onSelectKeyframe({ kind, frame: key.frame, trackId })
+    setDragging({ kind, trackId, fromFrame: key.frame, toFrame })
+    const move = moveEvent => {
+      toFrame = Math.round(clamp((moveEvent.clientX - rect.left) / rect.width, 0, 1) * TOTAL_FRAMES)
+      setDragging({ kind, trackId, fromFrame: key.frame, toFrame })
+    }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      setDragging(null)
+      if (toFrame !== key.frame) onMoveKeyframe({ kind, trackId, fromFrame: key.frame, toFrame })
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+  const renderTrack = (frames, kind, onDelete, trackId = null) => (
     <div className={`track ${kind}-track`} onPointerDown={onPointerDown}>
       <div className="track-fill" style={{ width: `${currentFrame / TOTAL_FRAMES * 100}%` }} />
       {!frames.length && <span className="empty-track-note">暂无关键帧</span>}
-      {frames.map(key => <button key={key.frame} className={`keyframe ${kind} ${key.frame === currentFrame ? 'is-current' : ''}`} style={{ left: `${key.frame / TOTAL_FRAMES * 100}%` }} title={`第 ${key.frame} 帧${key.frame === currentFrame ? '（双击删除）' : ''}`} onDoubleClick={event => { event.stopPropagation(); onDelete(key.frame) }} />)}
+      {frames.map(key => {
+        const isDragged = dragging?.kind === kind && dragging?.trackId === trackId && dragging?.fromFrame === key.frame
+        const displayFrame = isDragged ? dragging.toFrame : key.frame
+        const isSelected = selectedKeyframe?.kind === kind && selectedKeyframe?.trackId === trackId && selectedKeyframe?.frame === key.frame
+        return <button key={key.frame} className={`keyframe ${kind} ${key.frame === currentFrame ? 'is-current' : ''} ${isSelected ? 'is-selected' : ''}`} data-interpolation={normalizeInterpolation(key.interpolation)} style={{ left: `${displayFrame / TOTAL_FRAMES * 100}%` }} title={`第 ${key.frame} 帧 · ${normalizeInterpolation(key.interpolation) === 'smooth' ? '平滑' : normalizeInterpolation(key.interpolation) === 'linear' ? '线性' : '保持'} · 拖动可移动`} onPointerDown={event => beginKeyDrag(event, key, kind, trackId)} onDoubleClick={event => { event.stopPropagation(); onDelete(key.frame); onSelectKeyframe(null) }} />
+      })}
       <div className="playhead" style={{ left: `${currentFrame / TOTAL_FRAMES * 100}%` }}><i /></div>
     </div>
   )
@@ -405,6 +492,19 @@ function Timeline({ currentFrame, onSeek, playing, onTogglePlay, keyframes, onAd
         <button className={`play-button ${playing ? 'is-playing' : ''}`} onClick={onTogglePlay}>{playing ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}</button>
         <ToolButton icon={SkipForward} label="跳到结尾" onClick={() => onSeek(TOTAL_FRAMES)} />
         <div className="time-readout"><strong>{String(currentFrame).padStart(3, '0')}</strong><span>/ {TOTAL_FRAMES} 帧</span></div>
+        <div className="timeline-key-editor">
+          {selectedKeyframe ? (
+            <>
+              <span>{selectedKeyframe.kind === 'camera' ? '镜头' : '物体'} · {selectedKeyframe.frame} 帧</span>
+              <select value={selectedKeyframe.interpolation} onChange={event => onChangeInterpolation(event.target.value)} title="插值方式">
+                <option value="smooth">平滑</option>
+                <option value="linear">线性</option>
+                <option value="hold">保持</option>
+              </select>
+              <div><button onClick={onCopyKeyframe} title="复制关键帧"><Copy size={12} /></button><button onClick={onPasteKeyframe} disabled={!hasClipboard} title="粘贴到当前帧"><Plus size={12} /></button><button onClick={onDeleteSelectedKeyframe} title="删除关键帧"><Trash2 size={12} /></button></div>
+            </>
+          ) : <span className="timeline-key-empty">点击关键帧进行编辑</span>}
+        </div>
       </div>
       <div className="timeline-body">
         <div className="ruler timeline-ruler">{[0, 24, 48, 72, 96, 120].map(frame => <span key={frame} style={{ left: `${frame / TOTAL_FRAMES * 100}%` }}>{frame}</span>)}</div>
@@ -414,7 +514,7 @@ function Timeline({ currentFrame, onSeek, playing, onTogglePlay, keyframes, onAd
         {objectTrack && (
           <>
             <div className="track-label object-track-label">{objectTrack.type === 'person' ? <UserRound size={13} /> : <Box size={13} />}<span>{objectTrack.name}</span></div>
-            <div className="object-track-slot">{renderTrack(objectTrack.keyframes, 'object', onDeleteObjectKeyframe)}</div>
+            <div className="object-track-slot">{renderTrack(objectTrack.keyframes, 'object', onDeleteObjectKeyframe, objectTrack.id)}</div>
             <button className="keyframe-button object-keyframe-button" onClick={onAddObjectKeyframe}><Plus size={13} /> 物体关键帧</button>
           </>
         )}
@@ -434,11 +534,15 @@ export default function App() {
   const [characterKeyframes, setCharacterKeyframes] = useState(() => startupProject?.objectKeyframes || startupProject?.characterKeyframes || initialCharacterKeyframes)
   const [objectDrafts, setObjectDrafts] = useState({})
   const [currentFrame, setCurrentFrame] = useState(0)
+  const [selectedKeyframe, setSelectedKeyframe] = useState(null)
+  const [keyframeClipboard, setKeyframeClipboard] = useState(null)
+  const [customPoses, setCustomPoses] = useState(() => readCustomPoses())
   const [playing, setPlaying] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [capturingImage, setCapturingImage] = useState(false)
   const [exportProgress, setExportProgress] = useState(0)
   const [showGrid, setShowGrid] = useState(true)
+  const [viewFocusRequest, setViewFocusRequest] = useState(null)
   const [toast, setToast] = useState('')
   const [saveStatus, setSaveStatus] = useState(startupProject ? '已恢复自动保存' : '自动保存已开启')
   const [, setHistoryVersion] = useState(0)
@@ -452,6 +556,12 @@ export default function App() {
 
   const selected = useMemo(() => selectedId === CAMERA_ID ? { id: CAMERA_ID } : objects.find(object => object.id === selectedId), [objects, selectedId])
   const activeObject = useMemo(() => selected?.id && selected.id !== CAMERA_ID ? selected : null, [selected])
+  const selectedKeyframeInfo = useMemo(() => {
+    if (!selectedKeyframe) return null
+    const track = selectedKeyframe.kind === 'camera' ? keyframes : characterKeyframes[selectedKeyframe.trackId]
+    const key = track?.find(item => item.frame === selectedKeyframe.frame)
+    return key ? { ...selectedKeyframe, interpolation: normalizeInterpolation(key.interpolation) } : null
+  }, [characterKeyframes, keyframes, selectedKeyframe])
   const animatedCamera = useMemo(() => keyframes.length ? cameraAtFrame(keyframes, currentFrame, camera.aspectRatio) : camera, [keyframes, currentFrame, camera])
   const isAnimating = playing || exporting
   const hasObjectAnimation = useMemo(() => Object.values(characterKeyframes).some(track => track?.length), [characterKeyframes])
@@ -474,6 +584,14 @@ export default function App() {
   useEffect(() => {
     currentFrameRef.current = currentFrame
   }, [currentFrame])
+
+  useEffect(() => {
+    try { localStorage.setItem(CUSTOM_POSE_STORAGE_KEY, JSON.stringify(customPoses)) } catch { /* 姿势库写入失败时不影响工程编辑 */ }
+  }, [customPoses])
+
+  useEffect(() => {
+    if (selectedKeyframe?.kind === 'object' && selectedKeyframe.trackId !== selectedId) setSelectedKeyframe(null)
+  }, [selectedId, selectedKeyframe])
 
   useEffect(() => {
     latestProjectRef.current = currentProject
@@ -516,9 +634,10 @@ export default function App() {
   const applyProjectSnapshot = useCallback(snapshot => {
     setObjects(snapshot.objects || initialObjects)
     setCamera({ ...initialCamera, ...(snapshot.camera || {}) })
-    setKeyframes(snapshot.keyframes || [])
-    setCharacterKeyframes(snapshot.objectKeyframes || snapshot.characterKeyframes || {})
+    setKeyframes(normalizeKeyframes(snapshot.keyframes || []))
+    setCharacterKeyframes(normalizeObjectTracks(snapshot.objectKeyframes || snapshot.characterKeyframes || {}))
     setObjectDrafts({})
+    setSelectedKeyframe(null)
     setPlaying(false)
     setSelectedId(current => current === CAMERA_ID || snapshot.objects?.some(object => object.id === current) ? current : snapshot.objects?.[0]?.id || CAMERA_ID)
   }, [])
@@ -559,6 +678,22 @@ export default function App() {
     setHistoryVersion(version => version + 1)
     setToast('已重做')
   }, [applyProjectSnapshot])
+
+  const focusSelected = useCallback(() => {
+    if (selectedId === CAMERA_ID) {
+      setViewFocusRequest({ position: [...camera.position], height: 0, distance: 4, nonce: Date.now() })
+      return
+    }
+    const object = objects.find(item => item.id === selectedId)
+    if (!object) return
+    const maxScale = Math.max(...(object.scale || [1, 1, 1]).map(value => Math.abs(value) || 1))
+    setViewFocusRequest({
+      position: [...object.position],
+      height: object.type === 'person' ? 1 : Math.min(maxScale * 0.45, 2),
+      distance: clamp(maxScale * 4.5, 2.8, 14),
+      nonce: Date.now(),
+    })
+  }, [camera.position, objects, selectedId])
 
   const seekToFrame = useCallback(frame => {
     const nextFrame = clamp(Math.round(frame), 0, TOTAL_FRAMES)
@@ -612,6 +747,7 @@ export default function App() {
       if (event.key.toLowerCase() === 'w') setTransformMode('translate')
       if (event.key.toLowerCase() === 'e') setTransformMode('rotate')
       if (event.key.toLowerCase() === 'r') setTransformMode('scale')
+      if (event.key.toLowerCase() === 'f') focusSelected()
       if (event.code === 'Space') { event.preventDefault(); togglePlayback() }
       if ((event.key === 'Delete' || event.key === 'Backspace') && selectedId !== CAMERA_ID) deleteSelected()
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd') { event.preventDefault(); duplicateSelected() }
@@ -620,7 +756,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [selectedId, objects, togglePlayback, undo, redo])
+  }, [selectedId, objects, togglePlayback, undo, redo, focusSelected])
 
   useEffect(() => {
     if (!toast) return
@@ -630,14 +766,16 @@ export default function App() {
 
   const addPerson = bodyType => {
     const id = uid()
-    const person = { id, name: `人物 · ${objects.filter(item => item.type === 'person').length + 1}`, type: 'person', bodyType, pose: 'idle', poseTime: presetPhase('idle'), joints: presetJoints(), rigRoot: [0, 0, 0], position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], color: '#e8e3d8' }
+    const person = { id, name: `人物 · ${objects.filter(item => item.type === 'person').length + 1}`, type: 'person', bodyType, pose: 'idle', poseTime: presetPhase('idle'), joints: presetJoints(), rigRoot: [0, 0, 0], footLock: false, position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], color: '#e8e3d8' }
     setObjects(list => [...list, person])
     setSelectedId(id)
   }
   const addPrimitive = type => {
     const id = uid()
-    const labels = { box: '方块', sphere: '球体', cylinder: '圆柱', plane: '平面' }
-    setObjects(list => [...list, { id, name: `${labels[type]} · ${list.filter(item => item.type === type).length + 1}`, type, position: [0, type === 'plane' ? 0.02 : 0.5, 0], rotation: [0, 0, 0], scale: type === 'plane' ? [2, 1, 2] : [1, 1, 1], color: '#c7c2b7' }])
+    const labels = { box: '方块', sphere: '球体', cylinder: '圆柱', plane: '平面', arch: '拱门', stairs: '楼梯', table: '桌子', chair: '椅子', sofa: '沙发', door: '门', window: '窗', tree: '树木', vehicle: '车辆', roof: '屋顶' }
+    const defaultScales = { arch: [1.8, 2.2, 0.45], stairs: [2.2, 1.4, 2.8], door: [1.2, 2.2, 0.25], window: [1.5, 1.3, 0.22], table: [1.7, 1, 1.1], chair: [0.8, 1, 0.8], sofa: [2.2, 1.1, 1], tree: [1.8, 2.6, 1.8], vehicle: [2.8, 1.2, 1.6], roof: [2.8, 1.2, 2.2] }
+    const positionY = type === 'plane' ? 0.02 : (type === 'tree' ? 1.3 : 0.5)
+    setObjects(list => [...list, { id, name: `${labels[type] || type} · ${list.filter(item => item.type === type).length + 1}`, type, position: [0, positionY, 0], rotation: [0, 0, 0], scale: type === 'plane' ? [2, 1, 2] : (defaultScales[type] || [1, 1, 1]), color: type === 'tree' ? '#9ca68d' : '#c7c2b7' }])
     setSelectedId(id)
   }
   const importModel = event => {
@@ -661,8 +799,42 @@ export default function App() {
     setObjects(list => list.map(object => object.id === id ? { ...object, ...patch } : object))
   }
   const updateSelected = patch => updateObjectById(selectedId, patch)
+  const saveCustomPose = person => {
+    if (!person || person.type !== 'person') return
+    const suggestedName = `自定义姿势 ${customPoses.length + 1}`
+    const name = window.prompt('为当前姿势命名', suggestedName)?.trim()
+    if (!name) return
+    const rig = poseForObject(person)
+    setCustomPoses(list => [...list, {
+      id: uid(),
+      name,
+      pose: normalizePoseId(person.pose),
+      poseTime: Number.isFinite(person.poseTime) ? person.poseTime : presetPhase(person.pose),
+      rigRoot: [...rig.root],
+      joints: cloneJointPose(rig.joints),
+    }])
+    setToast(`姿势“${name}”已保存到本机`)
+  }
+  const applyCustomPose = customPose => {
+    if (!customPose || !activeObject || activeObject.type !== 'person') return
+    updateSelected({
+      pose: normalizePoseId(customPose.pose),
+      poseTime: Number.isFinite(customPose.poseTime) ? customPose.poseTime : presetPhase(customPose.pose),
+      rigRoot: [...(customPose.rigRoot || presetRoot())],
+      joints: cloneJointPose(customPose.joints),
+    })
+    setToast(`已应用姿势“${customPose.name}”`)
+  }
+  const deleteCustomPose = poseId => {
+    const pose = customPoses.find(item => item.id === poseId)
+    if (!pose || !window.confirm(`删除姿势“${pose.name}”？`)) return
+    setCustomPoses(list => list.filter(item => item.id !== poseId))
+    setToast(`已删除姿势“${pose.name}”`)
+  }
   const deleteSelected = () => {
     if (selectedId === CAMERA_ID) return
+    const source = objects.find(object => object.id === selectedId)
+    if (source?.locked) { setToast('物体已锁定，请先解除锁定'); return }
     setObjects(list => list.filter(object => object.id !== selectedId))
     setCharacterKeyframes(tracks => {
       const next = { ...tracks }
@@ -693,21 +865,26 @@ export default function App() {
     setSelectedId(id)
   }
   const addKeyframe = () => {
-    const next = { frame: currentFrame, position: [...camera.position], target: [...camera.target], focalLength: camera.focalLength }
+    const existing = keyframes.find(key => key.frame === currentFrame)
+    const next = { frame: currentFrame, interpolation: normalizeInterpolation(existing?.interpolation), position: [...camera.position], target: [...camera.target], focalLength: camera.focalLength }
     setKeyframes(list => [...list.filter(key => key.frame !== currentFrame), next].sort((a, b) => a.frame - b.frame))
+    setSelectedKeyframe({ kind: 'camera', frame: currentFrame, trackId: null })
     setToast(`已记录第 ${currentFrame} 帧`)
   }
   const deleteKeyframe = frame => {
     setKeyframes(list => list.filter(key => key.frame !== frame))
+    if (selectedKeyframe?.kind === 'camera' && selectedKeyframe.frame === frame) setSelectedKeyframe(null)
   }
   const addObjectKeyframe = () => {
     if (!activeObject) return
     const source = objectDrafts[activeObject.id] || activeObject
-    const next = objectKeyframeFromObject(source, currentFrame)
+    const existing = characterKeyframes[activeObject.id]?.find(key => key.frame === currentFrame)
+    const next = { ...objectKeyframeFromObject(source, currentFrame), interpolation: normalizeInterpolation(existing?.interpolation) }
     setCharacterKeyframes(tracks => ({
       ...tracks,
       [activeObject.id]: [...(tracks[activeObject.id] || []).filter(key => key.frame !== currentFrame), next].sort((a, b) => a.frame - b.frame),
     }))
+    setSelectedKeyframe({ kind: 'object', frame: currentFrame, trackId: activeObject.id })
     setObjectDrafts(drafts => {
       const nextDrafts = { ...drafts }
       delete nextDrafts[activeObject.id]
@@ -725,6 +902,51 @@ export default function App() {
       delete next[activeObject.id]
       return next
     })
+    if (selectedKeyframe?.kind === 'object' && selectedKeyframe.trackId === activeObject.id && selectedKeyframe.frame === frame) setSelectedKeyframe(null)
+  }
+  const moveKeyframe = ({ kind, trackId, fromFrame, toFrame }) => {
+    const move = list => {
+      const source = list.find(key => key.frame === fromFrame)
+      if (!source) return list
+      return [...list.filter(key => key.frame !== fromFrame && key.frame !== toFrame), { ...source, frame: toFrame }].sort((a, b) => a.frame - b.frame)
+    }
+    if (kind === 'camera') setKeyframes(move)
+    else setCharacterKeyframes(tracks => ({ ...tracks, [trackId]: move(tracks[trackId] || []) }))
+    setSelectedKeyframe({ kind, trackId, frame: toFrame })
+    seekToFrame(toFrame)
+    setToast(`关键帧已移动到第 ${toFrame} 帧`)
+  }
+  const changeSelectedInterpolation = interpolation => {
+    if (!selectedKeyframeInfo) return
+    const update = list => list.map(key => key.frame === selectedKeyframeInfo.frame ? { ...key, interpolation: normalizeInterpolation(interpolation) } : key)
+    if (selectedKeyframeInfo.kind === 'camera') setKeyframes(update)
+    else setCharacterKeyframes(tracks => ({ ...tracks, [selectedKeyframeInfo.trackId]: update(tracks[selectedKeyframeInfo.trackId] || []) }))
+  }
+  const copySelectedKeyframe = () => {
+    if (!selectedKeyframeInfo) return
+    const track = selectedKeyframeInfo.kind === 'camera' ? keyframes : characterKeyframes[selectedKeyframeInfo.trackId]
+    const key = track?.find(item => item.frame === selectedKeyframeInfo.frame)
+    if (!key) return
+    setKeyframeClipboard({ kind: selectedKeyframeInfo.kind, key: JSON.parse(JSON.stringify(key)) })
+    setToast('关键帧已复制')
+  }
+  const pasteKeyframe = () => {
+    if (!keyframeClipboard) return
+    const next = { ...JSON.parse(JSON.stringify(keyframeClipboard.key)), frame: currentFrame }
+    if (keyframeClipboard.kind === 'camera') {
+      setKeyframes(list => [...list.filter(key => key.frame !== currentFrame), next].sort((a, b) => a.frame - b.frame))
+      setSelectedKeyframe({ kind: 'camera', frame: currentFrame, trackId: null })
+    } else {
+      if (!activeObject) { setToast('请先选择要粘贴关键帧的物体'); return }
+      setCharacterKeyframes(tracks => ({ ...tracks, [activeObject.id]: [...(tracks[activeObject.id] || []).filter(key => key.frame !== currentFrame), next].sort((a, b) => a.frame - b.frame) }))
+      setSelectedKeyframe({ kind: 'object', frame: currentFrame, trackId: activeObject.id })
+    }
+    setToast(`关键帧已粘贴到第 ${currentFrame} 帧`)
+  }
+  const deleteSelectedKeyframe = () => {
+    if (!selectedKeyframeInfo) return
+    if (selectedKeyframeInfo.kind === 'camera') deleteKeyframe(selectedKeyframeInfo.frame)
+    else if (activeObject?.id === selectedKeyframeInfo.trackId) deleteObjectKeyframe(selectedKeyframeInfo.frame)
   }
   const saveProject = ({ download = false } = {}) => {
     const data = projectData({ objects, camera, keyframes, objectKeyframes: characterKeyframes })
@@ -859,9 +1081,10 @@ export default function App() {
         const loadedTracks = normalizeObjectTracks(data.objectKeyframes || data.characterKeyframes || {})
         setObjects(loadedObjects)
         setCamera({ ...initialCamera, ...(data.camera || {}) })
-        setKeyframes(data.keyframes || initialKeyframes)
+        setKeyframes(normalizeKeyframes(data.keyframes || initialKeyframes))
         setCharacterKeyframes(Object.keys(loadedTracks).length ? loadedTracks : fallbackCharacterKeyframes(loadedObjects))
         setObjectDrafts({})
+        setSelectedKeyframe(null)
         setCurrentFrame(0)
         currentFrameRef.current = 0
         setPlaying(false)
@@ -878,6 +1101,7 @@ export default function App() {
     setKeyframes(initialKeyframes)
     setCharacterKeyframes(initialCharacterKeyframes)
     setObjectDrafts({})
+    setSelectedKeyframe(null)
     setCurrentFrame(0)
     currentFrameRef.current = 0
     setPlaying(false)
@@ -909,7 +1133,7 @@ export default function App() {
       </header>
 
       <div className="workspace">
-        <LeftSidebar objects={objects} selectedId={selectedId} onSelect={setSelectedId} onAddPerson={addPerson} onAddPrimitive={addPrimitive} onImport={importModel} onToggleVisible={id => updateObjectById(id, { visible: objects.find(item => item.id === id)?.visible === false })} />
+        <LeftSidebar objects={objects} selectedId={selectedId} onSelect={setSelectedId} onAddPerson={addPerson} onAddPrimitive={addPrimitive} onImport={importModel} onToggleVisible={id => updateObjectById(id, { visible: objects.find(item => item.id === id)?.visible === false })} onToggleLock={id => updateObjectById(id, { locked: !objects.find(item => item.id === id)?.locked })} />
         <section className="viewport-shell">
           <div className="viewport-toolbar floating-panel">
             <ToolButton icon={MousePointer2} label="选择" active={!['translate', 'rotate', 'scale'].includes(transformMode)} onClick={() => setTransformMode('select')} shortcut="Q" />
@@ -919,7 +1143,7 @@ export default function App() {
             <ToolButton icon={BoxSelect} label="缩放" active={transformMode === 'scale'} onClick={() => setTransformMode('scale')} shortcut="R" />
           </div>
           <div className="viewport-mode-help">
-            {transformMode === 'select' && 'Q 骨骼编辑 · 直接拖人物部位 · Shift 拖动扭转'}
+            {transformMode === 'select' && 'Q 人物摆姿 · 青色手脚 IK · 金色单骨骼 · Shift 扭转'}
             {transformMode === 'translate' && 'W 整体移动 · 拖动红 / 绿 / 蓝坐标轴'}
             {transformMode === 'rotate' && 'E 整体旋转 · 左右拖=水平 · 上下拖=纵向 · Shift 拖=翻滚'}
             {transformMode === 'scale' && 'R 整体缩放 · 拖动坐标轴或中心块'}
@@ -929,7 +1153,7 @@ export default function App() {
             <button><span className="solid-sphere" /> 实体</button>
           </div>
           <div className="viewport-label"><strong>透视视图</strong><span>场景单位 · 世界坐标</span></div>
-          <MainViewport objects={animatedObjects} selectedId={selectedId} activeJoint={selectedJoint} onSelect={setSelectedId} onJointSelect={(objectId, jointId) => { setSelectedId(objectId); setSelectedJoint(jointId) }} transformMode={transformMode} onUpdateObject={updateObjectById} cameraData={displayCamera} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} showGrid={showGrid} />
+          <MainViewport objects={animatedObjects} selectedId={selectedId} activeJoint={selectedJoint} onSelect={setSelectedId} onJointSelect={(objectId, jointId) => { setSelectedId(objectId); setSelectedJoint(jointId) }} transformMode={transformMode} onUpdateObject={updateObjectById} cameraData={displayCamera} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} showGrid={showGrid} focusRequest={viewFocusRequest} />
           <div className="navigation-hint"><span><MousePointer2 size={12} /> 左键选择</span><span>中键旋转视角</span><span>滚轮缩放</span></div>
           <div className="camera-monitor">
             <div className="monitor-head"><div><Video size={13} /><strong>摄像机 01</strong><span>SHOT PREVIEW</span></div><button onClick={() => setSelectedId(CAMERA_ID)}><ZoomIn size={13} /></button></div>
@@ -944,7 +1168,7 @@ export default function App() {
             </div>
           </div>
         </section>
-        <Inspector selected={inspectorSelected} camera={camera} selectedJoint={selectedJoint} onSelectJoint={setSelectedJoint} onUpdateObject={updateSelected} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} onDelete={deleteSelected} />
+        <Inspector selected={inspectorSelected} camera={camera} selectedJoint={selectedJoint} customPoses={customPoses} onSelectJoint={setSelectedJoint} onUpdateObject={updateSelected} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} onDelete={deleteSelected} onDuplicate={duplicateSelected} onFocus={focusSelected} onToggleLock={() => activeObject && updateSelected({ locked: !activeObject.locked })} onSaveCustomPose={saveCustomPose} onApplyCustomPose={applyCustomPose} onDeleteCustomPose={deleteCustomPose} />
         <Timeline
           currentFrame={currentFrame}
           onSeek={seekToFrame}
@@ -953,9 +1177,17 @@ export default function App() {
           keyframes={keyframes}
           onAddKeyframe={addKeyframe}
           onDeleteKeyframe={deleteKeyframe}
-          objectTrack={activeObject ? { name: activeObject.name, type: activeObject.type, keyframes: characterKeyframes[activeObject.id] || [] } : null}
+          objectTrack={activeObject ? { id: activeObject.id, name: activeObject.name, type: activeObject.type, keyframes: characterKeyframes[activeObject.id] || [] } : null}
           onAddObjectKeyframe={addObjectKeyframe}
           onDeleteObjectKeyframe={deleteObjectKeyframe}
+          selectedKeyframe={selectedKeyframeInfo}
+          onSelectKeyframe={setSelectedKeyframe}
+          onMoveKeyframe={moveKeyframe}
+          onCopyKeyframe={copySelectedKeyframe}
+          onPasteKeyframe={pasteKeyframe}
+          onDeleteSelectedKeyframe={deleteSelectedKeyframe}
+          onChangeInterpolation={changeSelectedInterpolation}
+          hasClipboard={Boolean(keyframeClipboard)}
         />
       </div>
       {capturingImage && (
