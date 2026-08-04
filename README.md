@@ -10,6 +10,14 @@ MONOFORM 是一款面向分镜、构图和镜头预演的轻量三维白模工�
 
 ![MONOFORM 完整工作台](docs/screenshots/monoform-overview.png)
 
+## 视频教学
+
+[![点击观看 MONOFORM 录屏教学](docs/screenshots/monoform-video-cover.jpg)](https://raw.githubusercontent.com/GuiYi-Xi/monoform-previs-studio/main/docs/tutorial/monoform-getting-started.mp4)
+
+点击上方封面即可播放录屏教学。视频时长约 4 分 41 秒，包含声音；如果浏览器没有自动播放，可使用下面的链接直接打开或下载。
+
+[播放或下载教学录屏 MP4](https://raw.githubusercontent.com/GuiYi-Xi/monoform-previs-studio/main/docs/tutorial/monoform-getting-started.mp4)
+
 ## 界面说明
 
 - 左侧「资源库」：添加人物、方块、球体、圆柱、平面或导入 GLB / GLTF 模型。
