@@ -6,6 +6,7 @@ import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.j
 import { poseForObject, presetDefinition } from './rig.js'
 
 const CAMERA_ID = '__shot_camera__'
+const BUILT_IN_MODEL_URL = `${import.meta.env.BASE_URL}models/xbot-animated.glb`
 const whiteMaterial = { roughness: 0.78, metalness: 0.02 }
 
 function JointSegment({ rotation = [0, 0, 0], length, startRadius, endRadius, jointRadius, color, selected, jointId, onSelectJoint, children }) {
@@ -290,7 +291,7 @@ function MixamoJointMarker({ bone, jointId, selected, modelRoot, onSelectJoint, 
 }
 
 function MixamoPersonModel({ bodyType = 'standard', pose = 'idle', poseTime, rigRoot, joints, color = '#e8e3d8', selected = false, selectedJoint, onSelectJoint, onRotateJoint, showBoneGizmo = false, onSurfacePointerDown, onSurfacePointerMove, onSurfacePointerUp }) {
-  const gltf = useGLTF('/models/xbot-animated.glb')
+  const gltf = useGLTF(BUILT_IN_MODEL_URL)
   const orbitControls = useThree(state => state.controls)
   const modelRoot = useRef(null)
   const rig = poseForObject({ pose, rigRoot, joints })

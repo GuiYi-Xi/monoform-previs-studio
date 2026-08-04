@@ -13,6 +13,7 @@ const TOTAL_FRAMES = 120
 const CAMERA_ID = '__shot_camera__'
 const PROJECT_STORAGE_KEY = 'stageframe-project'
 const PROJECT_VERSION = 7
+const BRAND_MARK_URL = `${import.meta.env.BASE_URL}branding/monoform-mark.png`
 const ASPECT_RATIOS = [
   { value: '16:9', label: '16 : 9 · 横屏视频', ratio: 16 / 9 },
   { value: '9:16', label: '9 : 16 · 竖屏短视频', ratio: 9 / 16 },
@@ -879,7 +880,7 @@ export default function App() {
     <main className="app-shell" aria-busy={exporting || capturingImage}>
       <header className="topbar">
         <div className="brand-mark">
-          <span className="brand-glyph"><img src="/branding/monoform-mark.png" alt="" /></span>
+          <span className="brand-glyph"><img src={BRAND_MARK_URL} alt="" /></span>
           <div><strong>MONOFORM</strong><small>PREVIS STUDIO · 白模预演</small></div>
         </div>
         <nav className="top-actions">
@@ -928,7 +929,7 @@ export default function App() {
               <div className={`monitor-canvas ${previewAspectClass}`} style={{ '--preview-aspect': previewAspect }}>
                 <CameraPreview objects={animatedObjects} cameraData={displayCamera} />
                 <span className="safe-frame" />
-                <span className="owner-watermark" aria-label="MONOFORM 品牌标识"><i><img src="/branding/monoform-mark.png" alt="" /></i><b>MONOFORM</b></span>
+                <span className="owner-watermark" aria-label="MONOFORM 品牌标识"><i><img src={BRAND_MARK_URL} alt="" /></i><b>MONOFORM</b></span>
                 <span className="monitor-timecode">00:00:{String(Math.floor(currentFrame / FPS)).padStart(2, '0')}:{String(currentFrame % FPS).padStart(2, '0')}</span>
                 <span className="monitor-focal">{Math.round(displayCamera.focalLength)} mm · {displayCamera.aspectRatio || '16:9'}</span>
               </div>
