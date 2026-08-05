@@ -39,7 +39,7 @@ export function ShotsPanel({ shots, activeShotId, onSelect, onAdd, onDuplicate, 
           )
         })}
       </div>
-      <p className="shots-panel-note">每个镜头独立保存场景、人物骨骼、摄像机和关键帧。切换镜头前会自动更新当前缩略图。</p>
+      <p className="shots-panel-note">每个镜头独立保存场景、人物骨骼、摄像机、参考图和关键帧。切换镜头前会自动更新当前缩略图。</p>
     </div>
   )
 }

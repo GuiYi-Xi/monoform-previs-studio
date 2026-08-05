@@ -57,11 +57,24 @@ export const JOINT_GROUPS = [...new Set(JOINT_DEFINITIONS.map(joint => joint.gro
 // Euler poses or skeleton retargeting are involved.
 export const RIG_PRESETS = {
   idle: { clip: 'idle', phase: 0.08, duration: 2.5, loopable: true, label: '自然站立' },
+  idle_shift: { clip: 'idle', phase: 0.58, label: '站立重心变化' },
   walk: { clip: 'walk', phase: 0.24, duration: 0.9666666388511658, loopable: true, label: '行走' },
+  walk_contact_a: { clip: 'walk', phase: 0.04, label: '行走接触步 A' },
+  walk_pass_a: { clip: 'walk', phase: 0.26, label: '行走跨步 A' },
+  walk_contact_b: { clip: 'walk', phase: 0.52, label: '行走接触步 B' },
+  walk_pass_b: { clip: 'walk', phase: 0.76, label: '行走跨步 B' },
   run: { clip: 'run', phase: 0.24, duration: 0.699999988079071, loopable: true, label: '奔跑' },
+  run_push_a: { clip: 'run', phase: 0.05, label: '跑步蹬地 A' },
+  run_air_a: { clip: 'run', phase: 0.26, label: '跑步腾空 A' },
+  run_push_b: { clip: 'run', phase: 0.55, label: '跑步蹬地 B' },
+  run_air_b: { clip: 'run', phase: 0.78, label: '跑步腾空 B' },
   sad_pose: { clip: 'sad_pose', phase: 1, label: '低头含胸（仅身体）' },
   agree: { clip: 'agree', phase: 0.48, duration: 1.8333333730697632, loopable: true, label: '点头动作（头颈）' },
+  nod_down: { clip: 'agree', phase: 0.36, label: '点头低位' },
+  nod_up: { clip: 'agree', phase: 0.72, label: '点头回正' },
   headShake: { clip: 'headShake', phase: 0.48, duration: 2.566666603088379, loopable: true, label: '摇头动作（头颈）' },
+  shake_left: { clip: 'headShake', phase: 0.26, label: '摇头左侧' },
+  shake_right: { clip: 'headShake', phase: 0.74, label: '摇头右侧' },
   tpose: { clip: null, phase: 0, label: 'T 型绑定姿态（官方骨架）' },
 }
 
@@ -93,9 +106,11 @@ export function poseCanLoop(pose = 'idle') {
 export const RIG_PRESET_OPTIONS = Object.entries(RIG_PRESETS).map(([id, preset]) => [id, preset.label])
 
 export const RIG_PRESET_GROUPS = [
-  { label: '基础', poses: [['idle', '站立'], ['tpose', 'T 型'], ['sad_pose', '低头含胸']] },
-  { label: '移动', poses: [['walk', '行走'], ['run', '奔跑']] },
-  { label: '表演', poses: [['agree', '点头'], ['headShake', '摇头']] },
+  { label: '基础', poses: [['idle', '自然站立'], ['idle_shift', '重心变化'], ['tpose', 'T 型'], ['sad_pose', '低头含胸']] },
+  { label: '持续动作', poses: [['walk', '行走循环'], ['run', '奔跑循环'], ['agree', '点头循环'], ['headShake', '摇头循环']] },
+  { label: '行走定格', poses: [['walk_contact_a', '接触步 A'], ['walk_pass_a', '跨步 A'], ['walk_contact_b', '接触步 B'], ['walk_pass_b', '跨步 B']] },
+  { label: '跑步定格', poses: [['run_push_a', '蹬地 A'], ['run_air_a', '腾空 A'], ['run_push_b', '蹬地 B'], ['run_air_b', '腾空 B']] },
+  { label: '头部定格', poses: [['nod_down', '点头低位'], ['nod_up', '点头回正'], ['shake_left', '摇头左侧'], ['shake_right', '摇头右侧']] },
 ]
 
 const emptyPose = () => Object.fromEntries(JOINT_DEFINITIONS.map(joint => [joint.id, [0, 0, 0]]))

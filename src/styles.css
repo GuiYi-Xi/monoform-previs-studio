@@ -232,6 +232,16 @@ button:disabled { opacity: .28; cursor: not-allowed !important; }
 .viewport-toolbar { top: 12px; left: 50%; transform: translateX(-50%); height: 34px; padding: 3px; gap: 2px; }
 .viewport-toolbar > span { width: 1px; height: 16px; align-self: center; background: var(--line); margin: 0 2px; }
 .viewport-mode-help { position: absolute; z-index: 4; top: 52px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 280px); padding: 4px 8px; border-radius: 4px; background: rgba(28,28,27,.72); color: rgba(255,255,255,.68); font-size: 8px; white-space: nowrap; pointer-events: none; backdrop-filter: blur(5px); }
+.reference-panel { z-index: 8; top: 50px; left: 12px; min-height: 30px; max-width: min(520px, calc(100% - 24px)); padding: 3px; gap: 3px; align-items: center; flex-wrap: wrap; }
+.reference-panel button { min-width: 28px; height: 24px; padding: 0 7px; display: flex; align-items: center; justify-content: center; gap: 4px; border: 0; border-radius: 4px; background: transparent; color: var(--text-faint); font-size: 8px; cursor: pointer; }
+.reference-panel button:hover, .reference-panel button.is-active { background: #3a3831; color: var(--accent); }
+.reference-panel .reference-upload { color: var(--text-dim); }
+.reference-panel label { height: 24px; padding: 0 5px; display: flex; align-items: center; gap: 5px; border-left: 1px solid var(--line); color: var(--text-faint); font-size: 7px; }
+.reference-panel label input { width: 70px; accent-color: var(--accent); }
+.reference-layer { position: absolute; z-index: 3; inset: 0; overflow: hidden; pointer-events: none; }
+.reference-layer img { position: absolute; display: block; height: auto; max-width: none; transform: translate(-50%, -50%); user-select: none; -webkit-user-drag: none; filter: saturate(.92); }
+.reference-layer.is-editing { z-index: 7; }
+.reference-layer.is-editing img { pointer-events: auto; cursor: move; outline: 1px dashed rgba(234,191,98,.9); outline-offset: 5px; box-shadow: 0 0 0 9999px rgba(16,16,15,.08); }
 .icon-button { width: 28px; height: 28px; padding: 0; border: 0; border-radius: 4px; background: transparent; display: grid; place-items: center; color: var(--text-faint); cursor: pointer; }
 .icon-button:hover { background: #3b3a36; color: var(--text); }
 .icon-button.is-active { background: var(--accent); color: var(--accent-ink); }

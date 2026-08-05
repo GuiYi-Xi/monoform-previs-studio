@@ -14,7 +14,7 @@ const CAMERA_ID = '__shot_camera__'
 const PROJECT_STORAGE_KEY = 'monoform-project'
 const LEGACY_PROJECT_STORAGE_KEY = 'stageframe-project'
 const CUSTOM_POSE_STORAGE_KEY = 'monoform-custom-poses'
-const PROJECT_VERSION = 13
+const PROJECT_VERSION = 14
 const DEFAULT_PROJECT_SETTINGS = {
   name: '未命名场景',
   fps: 24,
@@ -66,6 +66,15 @@ const initialCamera = {
   rotation: cameraRotationToward(DEFAULT_CAMERA_POSITION, LEGACY_DEFAULT_CAMERA_TARGET),
   focalLength: 42,
   aspectRatio: '16:9',
+}
+const DEFAULT_REFERENCE = {
+  image: '',
+  name: '',
+  opacity: 0.45,
+  scale: 1,
+  x: 0,
+  y: 0,
+  visible: true,
 }
 
 const initialKeyframes = []
@@ -127,6 +136,21 @@ function normalizeCameraKeyframes(keys = [], fallbackCamera = initialCamera) {
       focalLength: clamp(Number(key.focalLength) || fallbackCamera.focalLength, 18, 120),
     }
   })
+}
+
+function normalizeReference(reference = {}) {
+  const image = typeof reference.image === 'string' && /^data:image\/(?:png|jpe?g|webp);base64,/i.test(reference.image)
+    ? reference.image
+    : ''
+  return {
+    image,
+    name: image ? String(reference.name || '参考图').slice(0, 80) : '',
+    opacity: clamp(Number(reference.opacity) || DEFAULT_REFERENCE.opacity, 0.1, 1),
+    scale: clamp(Number(reference.scale) || DEFAULT_REFERENCE.scale, 0.25, 2),
+    x: clamp(Number(reference.x) || 0, -75, 75),
+    y: clamp(Number(reference.y) || 0, -75, 75),
+    visible: reference.visible !== false,
+  }
 }
 
 function normalizeProjectSettings(settings = {}) {
@@ -231,6 +255,7 @@ function normalizeShot(shot, index, fallback) {
     loopPlayback: timing.loopPlayback,
     objects,
     camera,
+    reference: normalizeReference(shot?.reference || fallback.reference),
     keyframes,
     objectKeyframes,
   }
@@ -246,6 +271,7 @@ function normalizeProjectData(data) {
     settings,
     objects: sourceObjects,
     camera: data.camera || firstShot?.camera || initialCamera,
+    reference: data.reference || firstShot?.reference || DEFAULT_REFERENCE,
     keyframes: data.keyframes || [],
     objectKeyframes: data.objectKeyframes || data.characterKeyframes || {},
   }
@@ -271,6 +297,7 @@ function normalizeProjectData(data) {
     shots,
     objects: activeShot.objects,
     camera: activeShot.camera,
+    reference: activeShot.reference,
     keyframes: activeShot.keyframes,
     objectKeyframes: activeShot.objectKeyframes,
   }
@@ -291,7 +318,7 @@ function readCachedProject() {
   }
 }
 
-function projectData({ settings, objects, camera, keyframes, objectKeyframes, shots, activeShotId }) {
+function projectData({ settings, objects, camera, reference, keyframes, objectKeyframes, shots, activeShotId }) {
   const normalizedSettings = normalizeProjectSettings(settings)
   const sourceShots = shots?.length ? shots : [{ id: 'shot-01', name: '镜头 01' }]
   const resolvedActiveShotId = sourceShots.some(shot => shot.id === activeShotId) ? activeShotId : sourceShots[0].id
@@ -303,6 +330,7 @@ function projectData({ settings, objects, camera, keyframes, objectKeyframes, sh
     loopPlayback: normalizedSettings.loopPlayback,
     objects,
     camera,
+    reference,
     keyframes,
     objectKeyframes,
   }
@@ -314,6 +342,7 @@ function projectData({ settings, objects, camera, keyframes, objectKeyframes, sh
     shots: serializedShots,
     objects,
     camera,
+    reference,
     keyframes,
     objectKeyframes,
   }
@@ -784,12 +813,113 @@ function Timeline({ currentFrame, fps, totalFrames, onSeek, playing, onTogglePla
   )
 }
 
+function referenceImageFromFile(file) {
+  return new Promise((resolve, reject) => {
+    if (!file?.type?.startsWith('image/')) { reject(new Error('请选择图片文件')); return }
+    if (file.size > 20 * 1024 * 1024) { reject(new Error('参考图不能超过 20 MB')); return }
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error('图片读取失败'))
+    reader.onload = () => {
+      const image = new Image()
+      image.onerror = () => reject(new Error('图片格式无法读取'))
+      image.onload = () => {
+        const longest = Math.max(image.naturalWidth, image.naturalHeight)
+        const ratio = Math.min(1, 1600 / Math.max(1, longest))
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.max(1, Math.round(image.naturalWidth * ratio))
+        canvas.height = Math.max(1, Math.round(image.naturalHeight * ratio))
+        const context = canvas.getContext('2d')
+        context.fillStyle = '#e8e6df'
+        context.fillRect(0, 0, canvas.width, canvas.height)
+        context.drawImage(image, 0, 0, canvas.width, canvas.height)
+        resolve(canvas.toDataURL('image/jpeg', 0.84))
+      }
+      image.src = reader.result
+    }
+    reader.readAsDataURL(file)
+  })
+}
+
+function ReferenceOverlay({ reference, onChange, onToast }) {
+  const inputRef = useRef(null)
+  const dragRef = useRef(null)
+  const [editing, setEditing] = useState(false)
+  const update = patch => onChange(current => normalizeReference({ ...current, ...patch }))
+  const upload = async event => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    try {
+      const image = await referenceImageFromFile(file)
+      onChange(normalizeReference({ ...DEFAULT_REFERENCE, image, name: file.name }))
+      setEditing(false)
+      onToast(`参考图“${file.name}”已加入工作区`)
+    } catch (error) {
+      onToast(error.message || '参考图上传失败')
+    }
+  }
+  const beginDrag = event => {
+    if (!editing) return
+    event.preventDefault()
+    event.stopPropagation()
+    const bounds = event.currentTarget.parentElement.getBoundingClientRect()
+    dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, x: reference.x, y: reference.y, width: bounds.width, height: bounds.height }
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+  const moveDrag = event => {
+    const drag = dragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    update({
+      x: drag.x + (event.clientX - drag.startX) / Math.max(1, drag.width) * 100,
+      y: drag.y + (event.clientY - drag.startY) / Math.max(1, drag.height) * 100,
+    })
+  }
+  const endDrag = event => {
+    if (dragRef.current?.pointerId !== event.pointerId) return
+    dragRef.current = null
+    event.currentTarget.releasePointerCapture?.(event.pointerId)
+  }
+  const hasImage = Boolean(reference.image)
+  return (
+    <>
+      <div className={`reference-panel floating-panel ${hasImage ? 'has-image' : ''}`}>
+        <button type="button" className="reference-upload" onClick={() => inputRef.current?.click()}><FileImage size={13} /> {hasImage ? '更换参考图' : '上传参考图'}</button>
+        <input ref={inputRef} className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp" onChange={upload} />
+        {hasImage && (
+          <>
+            <button type="button" className={reference.visible ? 'is-active' : ''} onClick={() => update({ visible: !reference.visible })}>{reference.visible ? '隐藏' : '显示'}</button>
+            <button type="button" className={editing ? 'is-active' : ''} onClick={() => { setEditing(value => !value); update({ visible: true }) }}><Move3D size={12} /> {editing ? '锁定' : '移动图'}</button>
+            <button type="button" title="移除参考图" aria-label="移除参考图" onClick={() => { onChange(cloneProjectValue(DEFAULT_REFERENCE)); setEditing(false) }}><Trash2 size={12} /></button>
+            <label><span>透明</span><input aria-label="参考图透明度" type="range" min="0.1" max="1" step="0.05" value={reference.opacity} onChange={event => update({ opacity: Number(event.target.value) })} /></label>
+            <label><span>大小</span><input aria-label="参考图大小" type="range" min="0.25" max="2" step="0.05" value={reference.scale} onChange={event => update({ scale: Number(event.target.value) })} /></label>
+            <button type="button" onClick={() => update({ x: 0, y: 0, scale: 1 })}>居中</button>
+          </>
+        )}
+      </div>
+      {hasImage && reference.visible && (
+        <div className={`reference-layer ${editing ? 'is-editing' : ''}`} aria-label={`参考图 ${reference.name}`}>
+          <img
+            src={reference.image}
+            alt={reference.name || '动作参考图'}
+            draggable="false"
+            style={{ left: `${50 + reference.x}%`, top: `${50 + reference.y}%`, width: `${72 * reference.scale}%`, opacity: reference.opacity }}
+            onPointerDown={beginDrag}
+            onPointerMove={moveDrag}
+            onPointerUp={endDrag}
+            onPointerCancel={endDrag}
+          />
+        </div>
+      )}
+    </>
+  )
+}
+
 export default function App() {
   const startupProject = useMemo(() => readCachedProject(), [])
   const [settings, setSettings] = useState(() => normalizeProjectSettings(startupProject?.settings))
   const [shots, setShots] = useState(() => startupProject?.shots || [{
     id: 'shot-01', name: '镜头 01', thumbnail: '', fps: DEFAULT_PROJECT_SETTINGS.fps, durationSeconds: DEFAULT_PROJECT_SETTINGS.durationSeconds, loopPlayback: false,
-    objects: cloneProjectValue(initialObjects), camera: cloneProjectValue(initialCamera), keyframes: [], objectKeyframes: {},
+    objects: cloneProjectValue(initialObjects), camera: cloneProjectValue(initialCamera), reference: cloneProjectValue(DEFAULT_REFERENCE), keyframes: [], objectKeyframes: {},
   }])
   const [activeShotId, setActiveShotId] = useState(() => startupProject?.activeShotId || 'shot-01')
   const [objects, setObjects] = useState(() => startupProject?.objects || initialObjects)
@@ -797,6 +927,7 @@ export default function App() {
   const [selectedJoint, setSelectedJoint] = useState('mixamorigSpine2')
   const [transformMode, setTransformMode] = useState('translate')
   const [camera, setCamera] = useState(() => ({ ...initialCamera, ...(startupProject?.camera || {}) }))
+  const [reference, setReference] = useState(() => normalizeReference(startupProject?.reference))
   const [keyframes, setKeyframes] = useState(() => startupProject?.keyframes || initialKeyframes)
   const [characterKeyframes, setCharacterKeyframes] = useState(() => startupProject?.objectKeyframes || startupProject?.characterKeyframes || initialCharacterKeyframes)
   const [objectDrafts, setObjectDrafts] = useState({})
@@ -836,9 +967,10 @@ export default function App() {
     loopPlayback: settings.loopPlayback,
     objects,
     camera,
+    reference,
     keyframes,
     objectKeyframes: characterKeyframes,
-  } : shot), [activeShotId, camera, characterKeyframes, keyframes, objects, settings.durationSeconds, settings.fps, settings.loopPlayback, shots])
+  } : shot), [activeShotId, camera, characterKeyframes, keyframes, objects, reference, settings.durationSeconds, settings.fps, settings.loopPlayback, shots])
   const maxKeyframeFrame = useMemo(() => Math.max(0, ...keyframes.map(key => key.frame), ...Object.values(characterKeyframes).flatMap(track => (track || []).map(key => key.frame))), [characterKeyframes, keyframes])
   const selectedKeyframeInfo = useMemo(() => {
     if (!selectedKeyframe) return null
@@ -862,11 +994,12 @@ export default function App() {
     settings,
     objects,
     camera,
+    reference,
     keyframes,
     objectKeyframes: characterKeyframes,
     shots,
     activeShotId,
-  }), [settings, objects, camera, keyframes, characterKeyframes, shots, activeShotId])
+  }), [settings, objects, camera, reference, keyframes, characterKeyframes, shots, activeShotId])
 
   useEffect(() => {
     currentFrameRef.current = currentFrame
@@ -926,6 +1059,7 @@ export default function App() {
     setActiveShotId(normalized.activeShotId)
     setObjects(normalized.objects)
     setCamera(normalized.camera)
+    setReference(normalized.reference)
     setKeyframes(normalized.keyframes)
     setCharacterKeyframes(normalized.objectKeyframes)
     setObjectDrafts({})
@@ -1122,6 +1256,7 @@ export default function App() {
     loopPlayback: settings.loopPlayback,
     objects,
     camera,
+    reference,
     keyframes,
     objectKeyframes: characterKeyframes,
   })
@@ -1134,6 +1269,7 @@ export default function App() {
     setSettings(current => ({ ...current, fps: shot.fps, durationSeconds: shot.durationSeconds, loopPlayback: shot.loopPlayback }))
     setObjects(cloneProjectValue(shot.objects))
     setCamera(cloneProjectValue(shot.camera))
+    setReference(normalizeReference(shot.reference))
     setKeyframes(cloneProjectValue(shot.keyframes || []))
     setCharacterKeyframes(cloneProjectValue(shot.objectKeyframes || {}))
     setCurrentFrame(0)
@@ -1165,12 +1301,13 @@ export default function App() {
       loopPlayback: settings.loopPlayback,
       objects: cloneProjectValue(objects),
       camera: cloneProjectValue(camera),
+      reference: cloneProjectValue(DEFAULT_REFERENCE),
       keyframes: [],
       objectKeyframes: {},
     }
     setShots(list => [...list.map(shot => shot.id === activeShotId ? liveShotRecord(shot, thumbnail || shot.thumbnail) : shot), nextShot])
     applyShotState(nextShot)
-    setToast(`已新建“${nextShot.name}” · 场景已复制，关键帧为空`)
+    setToast(`已新建“${nextShot.name}” · 场景已复制，关键帧和参考图为空`)
   }
 
   const duplicateShot = shotId => {
@@ -1403,7 +1540,7 @@ export default function App() {
     else if (activeObject?.id === selectedKeyframeInfo.trackId) deleteObjectKeyframe(selectedKeyframeInfo.frame)
   }
   const saveProject = ({ download = false } = {}) => {
-    const data = projectData({ settings, objects, camera, keyframes, objectKeyframes: characterKeyframes, shots, activeShotId })
+    const data = projectData({ settings, objects, camera, reference, keyframes, objectKeyframes: characterKeyframes, shots, activeShotId })
     const serialized = JSON.stringify(data)
     let cached = true
     try { localStorage.setItem(PROJECT_STORAGE_KEY, serialized) } catch { cached = false }
@@ -1541,6 +1678,7 @@ export default function App() {
         setActiveShotId(loaded.activeShotId)
         setObjects(loaded.objects)
         setCamera(loaded.camera)
+        setReference(loaded.reference)
         setKeyframes(loaded.keyframes)
         setCharacterKeyframes(loaded.objectKeyframes)
         setObjectDrafts({})
@@ -1560,10 +1698,11 @@ export default function App() {
     const resetObjects = cloneProjectValue(initialObjects)
     const resetCamera = cloneProjectValue(initialCamera)
     setSettings({ ...DEFAULT_PROJECT_SETTINGS })
-    setShots([{ id: 'shot-01', name: '镜头 01', thumbnail: '', fps: 24, durationSeconds: 5, loopPlayback: false, objects: resetObjects, camera: resetCamera, keyframes: [], objectKeyframes: {} }])
+    setShots([{ id: 'shot-01', name: '镜头 01', thumbnail: '', fps: 24, durationSeconds: 5, loopPlayback: false, objects: resetObjects, camera: resetCamera, reference: cloneProjectValue(DEFAULT_REFERENCE), keyframes: [], objectKeyframes: {} }])
     setActiveShotId('shot-01')
     setObjects(resetObjects)
     setCamera(resetCamera)
+    setReference(cloneProjectValue(DEFAULT_REFERENCE))
     setKeyframes(initialKeyframes)
     setCharacterKeyframes(initialCharacterKeyframes)
     setObjectDrafts({})
@@ -1622,6 +1761,7 @@ export default function App() {
           </div>
           <div className="viewport-label"><strong>透视视图</strong><span>场景单位 · 世界坐标</span></div>
           <MainViewport objects={animatedObjects} animationTime={currentFrame / fps} selectedId={selectedId} activeJoint={selectedJoint} onSelect={setSelectedId} onJointSelect={(objectId, jointId) => { setSelectedId(objectId); setSelectedJoint(jointId) }} transformMode={transformMode} onUpdateObject={updateObjectById} cameraData={displayCamera} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} showGrid={showGrid} focusRequest={viewFocusRequest} />
+          <ReferenceOverlay reference={reference} onChange={setReference} onToast={setToast} />
           <div className="navigation-hint"><span><MousePointer2 size={12} /> 左键选择</span><span>中键旋转视角</span><span>滚轮缩放</span></div>
           <div className="camera-monitor">
             <div className="monitor-head"><div><Video size={13} /><strong>摄像机 01</strong><span>SHOT PREVIEW</span></div><button onClick={() => setSelectedId(CAMERA_ID)}><ZoomIn size={13} /></button></div>
