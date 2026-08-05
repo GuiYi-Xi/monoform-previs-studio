@@ -7,13 +7,14 @@ import {
   Unlock,
 } from 'lucide-react'
 import { MainViewport, CameraPreview } from './Viewport.jsx'
+import { ShotsPanel } from './ShotsPanel.jsx'
 import { JOINT_DEFINITIONS, JOINT_GROUPS, RIG_PRESET_GROUPS, RIG_PRESET_OPTIONS, cloneJointPose, interpolateJointPose, normalizePoseId, poseCanLoop, poseForObject, presetJoints, presetPhase, presetRoot } from './rig.js'
 
 const CAMERA_ID = '__shot_camera__'
 const PROJECT_STORAGE_KEY = 'monoform-project'
 const LEGACY_PROJECT_STORAGE_KEY = 'stageframe-project'
 const CUSTOM_POSE_STORAGE_KEY = 'monoform-custom-poses'
-const PROJECT_VERSION = 10
+const PROJECT_VERSION = 12
 const DEFAULT_PROJECT_SETTINGS = {
   name: '未命名场景',
   fps: 24,
@@ -77,6 +78,8 @@ const ease = t => t * t * (3 - 2 * t)
 const normalizeInterpolation = value => ['smooth', 'linear', 'hold'].includes(value) ? value : 'smooth'
 const segmentAmount = (key, amount) => key?.interpolation === 'hold' ? 0 : key?.interpolation === 'linear' ? amount : ease(amount)
 const normalizeKeyframes = keys => (keys || []).map(key => ({ ...key, interpolation: normalizeInterpolation(key.interpolation) }))
+const POSE_LABELS = Object.fromEntries(RIG_PRESET_OPTIONS)
+const poseLabel = pose => POSE_LABELS[normalizePoseId(pose)] || '自定义动作'
 
 function normalizeProjectSettings(settings = {}) {
   const fps = FPS_OPTIONS.includes(Number(settings.fps)) ? Number(settings.fps) : DEFAULT_PROJECT_SETTINGS.fps
@@ -106,10 +109,10 @@ function normalizePerson(object) {
     ...object,
     pose,
     poseTime: Number.isFinite(object.poseTime) ? object.poseTime : presetPhase(pose),
-    rigRoot: [0, 0, 0],
+    rigRoot: Array.isArray(object.rigRoot) ? object.rigRoot.slice(0, 3).map(value => Number(value) || 0) : [0, 0, 0],
     joints: cloneJointPose(object.joints),
     footLock: Boolean(object.footLock),
-    continuousMotion: Boolean(object.continuousMotion),
+    continuousMotion: poseCanLoop(pose) && Boolean(object.continuousMotion),
   }
 }
 
@@ -137,10 +140,91 @@ function normalizeObjectTracks(tracks = {}) {
       interpolation: normalizeInterpolation(key.interpolation),
       pose,
       poseTime: Number.isFinite(key.poseTime) ? key.poseTime : presetPhase(pose),
-      rigRoot: [0, 0, 0],
+      continuousMotion: poseCanLoop(pose) ? (key.continuousMotion === undefined ? undefined : Boolean(key.continuousMotion)) : false,
+      rigRoot: Array.isArray(key.rigRoot) ? key.rigRoot.slice(0, 3).map(value => Number(value) || 0) : [0, 0, 0],
       joints: cloneJointPose(key.joints),
     }
   })]))
+}
+
+const cloneProjectValue = value => JSON.parse(JSON.stringify(value))
+const defaultShotName = index => `镜头 ${String(index + 1).padStart(2, '0')}`
+
+function uniqueShotName(shots, preferred) {
+  const used = new Set(shots.map(shot => String(shot.name || '').trim().toLocaleLowerCase()))
+  const base = String(preferred || '镜头').trim().slice(0, 30) || '镜头'
+  if (!used.has(base.toLocaleLowerCase())) return base
+  for (let copy = 2; copy <= 99; copy += 1) {
+    const suffix = ` ${copy}`
+    const candidate = `${base.slice(0, 30 - suffix.length)}${suffix}`
+    if (!used.has(candidate.toLocaleLowerCase())) return candidate
+  }
+  return `${base.slice(0, 23)} ${uid().slice(-6)}`
+}
+
+function normalizeShot(shot, index, fallback) {
+  const objects = (Array.isArray(shot?.objects) ? shot.objects : fallback.objects).map(normalizePerson)
+  const keyframes = normalizeKeyframes(shot?.keyframes ?? fallback.keyframes ?? [])
+  const objectKeyframes = normalizeObjectTracks(shot?.objectKeyframes || shot?.characterKeyframes || fallback.objectKeyframes || {})
+  const timing = normalizeProjectSettings({
+    fps: shot?.fps ?? shot?.settings?.fps ?? fallback.settings.fps,
+    durationSeconds: shot?.durationSeconds ?? shot?.settings?.durationSeconds ?? fallback.settings.durationSeconds,
+    loopPlayback: shot?.loopPlayback ?? shot?.settings?.loopPlayback ?? fallback.settings.loopPlayback,
+  })
+  const maxFrame = Math.max(0, ...keyframes.map(key => key.frame), ...Object.values(objectKeyframes).flatMap(track => (track || []).map(key => key.frame)))
+  if (maxFrame > timing.fps * timing.durationSeconds) timing.durationSeconds = clamp(Math.ceil(maxFrame / timing.fps), 1, 60)
+  return {
+    id: String(shot?.id || `shot-${uid()}`),
+    name: String(shot?.name || defaultShotName(index)).trim().slice(0, 30) || defaultShotName(index),
+    thumbnail: typeof shot?.thumbnail === 'string' && shot.thumbnail.startsWith('data:image/') ? shot.thumbnail : '',
+    fps: timing.fps,
+    durationSeconds: timing.durationSeconds,
+    loopPlayback: timing.loopPlayback,
+    objects,
+    camera: { ...initialCamera, ...(shot?.camera || fallback.camera || {}) },
+    keyframes,
+    objectKeyframes,
+  }
+}
+
+function normalizeProjectData(data) {
+  if (!data) return null
+  const firstShot = Array.isArray(data.shots) ? data.shots[0] : null
+  const sourceObjects = Array.isArray(data.objects) ? data.objects : firstShot?.objects
+  if (!Array.isArray(sourceObjects)) return null
+  const settings = normalizeProjectSettings(data.settings)
+  const fallback = {
+    settings,
+    objects: sourceObjects,
+    camera: data.camera || firstShot?.camera || initialCamera,
+    keyframes: data.keyframes || [],
+    objectKeyframes: data.objectKeyframes || data.characterKeyframes || {},
+  }
+  const rawShots = Array.isArray(data.shots) && data.shots.length ? data.shots : [{
+    id: 'shot-01',
+    name: '镜头 01',
+    fps: settings.fps,
+    durationSeconds: settings.durationSeconds,
+    loopPlayback: settings.loopPlayback,
+    objects: fallback.objects,
+    camera: fallback.camera,
+    keyframes: fallback.keyframes,
+    objectKeyframes: fallback.objectKeyframes,
+  }]
+  const shots = rawShots.slice(0, 30).map((shot, index) => normalizeShot(shot, index, fallback))
+  const activeShotId = shots.some(shot => shot.id === data.activeShotId) ? data.activeShotId : shots[0].id
+  const activeShot = shots.find(shot => shot.id === activeShotId) || shots[0]
+  return {
+    ...data,
+    version: PROJECT_VERSION,
+    settings: { ...settings, fps: activeShot.fps, durationSeconds: activeShot.durationSeconds, loopPlayback: activeShot.loopPlayback },
+    activeShotId,
+    shots,
+    objects: activeShot.objects,
+    camera: activeShot.camera,
+    keyframes: activeShot.keyframes,
+    objectKeyframes: activeShot.objectKeyframes,
+  }
 }
 
 function readCachedProject() {
@@ -149,19 +233,36 @@ function readCachedProject() {
     const legacy = current ? null : localStorage.getItem(LEGACY_PROJECT_STORAGE_KEY)
     const serialized = current || legacy
     const data = JSON.parse(serialized || 'null')
-    if (!data || !Array.isArray(data.objects)) return null
+    const normalized = normalizeProjectData(data)
+    if (!normalized) return null
     if (!current && legacy) localStorage.setItem(PROJECT_STORAGE_KEY, legacy)
-    const tracks = data.objectKeyframes || data.characterKeyframes || {}
-    return { ...data, settings: normalizeProjectSettings(data.settings), objects: data.objects.map(normalizePerson), keyframes: normalizeKeyframes(data.keyframes), objectKeyframes: normalizeObjectTracks(tracks) }
+    return normalized
   } catch {
     return null
   }
 }
 
-function projectData({ settings, objects, camera, keyframes, objectKeyframes }) {
+function projectData({ settings, objects, camera, keyframes, objectKeyframes, shots, activeShotId }) {
+  const normalizedSettings = normalizeProjectSettings(settings)
+  const sourceShots = shots?.length ? shots : [{ id: 'shot-01', name: '镜头 01' }]
+  const resolvedActiveShotId = sourceShots.some(shot => shot.id === activeShotId) ? activeShotId : sourceShots[0].id
+  const liveShot = {
+    ...(sourceShots.find(shot => shot.id === resolvedActiveShotId) || sourceShots[0]),
+    id: resolvedActiveShotId,
+    fps: normalizedSettings.fps,
+    durationSeconds: normalizedSettings.durationSeconds,
+    loopPlayback: normalizedSettings.loopPlayback,
+    objects,
+    camera,
+    keyframes,
+    objectKeyframes,
+  }
+  const serializedShots = sourceShots.map(shot => shot.id === resolvedActiveShotId ? liveShot : shot)
   return {
     version: PROJECT_VERSION,
-    settings: normalizeProjectSettings(settings),
+    settings: normalizedSettings,
+    activeShotId: resolvedActiveShotId,
+    shots: serializedShots,
     objects,
     camera,
     keyframes,
@@ -198,14 +299,23 @@ function objectKeyframeFromObject(object, frame) {
     scale: [...object.scale],
     pose: normalizePoseId(object.pose),
     poseTime: Number.isFinite(object.poseTime) ? object.poseTime : presetPhase(object.pose),
+    continuousMotion: poseCanLoop(object.pose) && Boolean(object.continuousMotion),
     rigRoot: [...rig.root],
     joints: cloneJointPose(rig.joints),
   }
 }
 
-function objectAtFrame(object, keyframes = [], frame) {
+function objectAtFrame(object, keyframes = [], frame, fps = DEFAULT_PROJECT_SETTINGS.fps) {
+  if (!object) return object
   const sorted = [...keyframes].sort((a, b) => a.frame - b.frame)
   if (!sorted.length) return object
+  const motionEnabled = key => poseCanLoop(key.pose || object.pose) && (key.continuousMotion === undefined ? Boolean(object.continuousMotion) : Boolean(key.continuousMotion))
+  const sameState = (leftKey, rightKey) => normalizePoseId(leftKey.pose || object.pose) === normalizePoseId(rightKey.pose || object.pose) && motionEnabled(leftKey) === motionEnabled(rightKey)
+  const stateStartFrame = key => {
+    let index = sorted.indexOf(key)
+    while (index > 0 && sameState(sorted[index - 1], sorted[index])) index -= 1
+    return sorted[index]?.frame ?? key.frame
+  }
   const applyKey = key => ({
     ...object,
     position: [...key.position],
@@ -213,6 +323,8 @@ function objectAtFrame(object, keyframes = [], frame) {
     scale: [...key.scale],
     pose: normalizePoseId(key.pose || object.pose),
     poseTime: Number.isFinite(key.poseTime) ? key.poseTime : presetPhase(key.pose || object.pose),
+    continuousMotion: motionEnabled(key),
+    motionStartTime: stateStartFrame(key) / fps,
     rigRoot: [...(key.rigRoot || poseForObject({ ...object, pose: key.pose || object.pose }).root)],
     joints: cloneJointPose(key.joints || poseForObject({ ...object, pose: key.pose || object.pose }).joints),
   })
@@ -228,24 +340,51 @@ function objectAtFrame(object, keyframes = [], frame) {
   const rightRoot = right.rigRoot || poseForObject({ ...object, pose: right.pose || object.pose }).root
   const leftPoseTime = Number.isFinite(left.poseTime) ? left.poseTime : presetPhase(left.pose || object.pose)
   const rightPoseTime = Number.isFinite(right.poseTime) ? right.poseTime : presetPhase(right.pose || object.pose)
+  const interpolateState = sameState(left, right)
   return {
     ...object,
     position: left.position.map((value, index) => lerp(value, right.position[index], t)),
     rotation: left.rotation.map((value, index) => lerp(value, right.rotation[index], t)),
     scale: left.scale.map((value, index) => lerp(value, right.scale[index], t)),
     pose: normalizePoseId(left.pose || object.pose),
-    poseTime: lerp(leftPoseTime, rightPoseTime, t),
-    rigRoot: leftRoot.map((value, index) => lerp(value, rightRoot[index], t)),
-    joints: interpolateJointPose(
+    poseTime: interpolateState ? lerp(leftPoseTime, rightPoseTime, t) : leftPoseTime,
+    continuousMotion: motionEnabled(left),
+    motionStartTime: stateStartFrame(left) / fps,
+    rigRoot: interpolateState ? leftRoot.map((value, index) => lerp(value, rightRoot[index], t)) : [...leftRoot],
+    joints: interpolateState ? interpolateJointPose(
       left.joints || poseForObject({ ...object, pose: left.pose || object.pose }).joints,
       right.joints || poseForObject({ ...object, pose: right.pose || object.pose }).joints,
       t,
-    ),
+    ) : cloneJointPose(left.joints || poseForObject({ ...object, pose: left.pose || object.pose }).joints),
   }
 }
 
-function objectsAtFrame(objects, objectKeyframes, frame) {
-  return objects.map(object => objectAtFrame(object, objectKeyframes[object.id], frame))
+function objectsAtFrame(objects, objectKeyframes, frame, fps) {
+  return objects.map(object => objectAtFrame(object, objectKeyframes[object.id], frame, fps))
+}
+
+function rotateVectorXYZ(vector, rotation = [0, 0, 0]) {
+  let [x, y, z] = vector
+  const [rx, ry, rz] = rotation
+  const cosX = Math.cos(rx); const sinX = Math.sin(rx)
+  const cosY = Math.cos(ry); const sinY = Math.sin(ry)
+  const cosZ = Math.cos(rz); const sinZ = Math.sin(rz)
+  ;[y, z] = [y * cosX - z * sinX, y * sinX + z * cosX]
+  ;[x, z] = [x * cosY + z * sinY, -x * sinY + z * cosY]
+  ;[x, y] = [x * cosZ - y * sinZ, x * sinZ + y * cosZ]
+  return [x, y, z]
+}
+
+function visualCenterForObject(object) {
+  if (!object) return [0, 0, 0]
+  const position = object.position || [0, 0, 0]
+  if (object.type !== 'person') return [...position]
+  const bodyHeight = { tall: 1.12, broad: 1.04, female: 0.98, male: 1.06 }[object.bodyType] || 1
+  const root = object.rigRoot || [0, 0, 0]
+  const scale = object.scale || [1, 1, 1]
+  const localCenter = [root[0] * scale[0], (root[1] + bodyHeight) * scale[1], root[2] * scale[2]]
+  const offset = rotateVectorXYZ(localCenter, object.rotation)
+  return position.map((value, index) => value + offset[index])
 }
 
 function fallbackCharacterKeyframes() {
@@ -316,7 +455,7 @@ function SceneList({ objects, selectedId, onSelect, onToggleVisible, onToggleLoc
   )
 }
 
-function LeftSidebar({ objects, selectedId, onSelect, onAddPerson, onAddPrimitive, onImport, onToggleVisible, onToggleLock }) {
+function LeftSidebar({ objects, selectedId, onSelect, onAddPerson, onAddPrimitive, onImport, onToggleVisible, onToggleLock, shots, activeShotId, onSelectShot, onAddShot, onDuplicateShot, onDeleteShot, onRenameShot, onCaptureShot }) {
   const [tab, setTab] = useState('assets')
   const inputRef = useRef(null)
   return (
@@ -324,6 +463,7 @@ function LeftSidebar({ objects, selectedId, onSelect, onAddPerson, onAddPrimitiv
       <div className="panel-tabs">
         <button className={tab === 'assets' ? 'is-active' : ''} onClick={() => setTab('assets')}>资源库</button>
         <button className={tab === 'scene' ? 'is-active' : ''} onClick={() => setTab('scene')}>场景层级</button>
+        <button className={tab === 'shots' ? 'is-active' : ''} onClick={() => setTab('shots')}>镜头</button>
       </div>
       {tab === 'assets' ? (
         <div className="assets-scroll">
@@ -352,14 +492,14 @@ function LeftSidebar({ objects, selectedId, onSelect, onAddPerson, onAddPrimitiv
           </button>
           <input ref={inputRef} className="visually-hidden" type="file" accept=".glb,.gltf" onChange={onImport} />
         </div>
-      ) : (
+      ) : tab === 'scene' ? (
         <SceneList objects={objects} selectedId={selectedId} onSelect={onSelect} onToggleVisible={onToggleVisible} onToggleLock={onToggleLock} />
-      )}
+      ) : <ShotsPanel shots={shots} activeShotId={activeShotId} onSelect={onSelectShot} onAdd={onAddShot} onDuplicate={onDuplicateShot} onDelete={onDeleteShot} onRename={onRenameShot} onCapture={onCaptureShot} />}
     </aside>
   )
 }
 
-function Inspector({ selected, camera, selectedJoint, customPoses, onSelectJoint, onUpdateObject, onUpdateCamera, onDelete, onDuplicate, onFocus, onToggleLock, onSaveCustomPose, onApplyCustomPose, onDeleteCustomPose }) {
+function Inspector({ selected, camera, selectedJoint, customPoses, onSelectJoint, onUpdateObject, onUpdateCamera, onDelete, onDuplicate, onFocus, onAimCamera, onToggleLock, onSaveCustomPose, onApplyCustomPose, onDeleteCustomPose }) {
   if (!selected) {
     return <aside className="right-sidebar panel empty-inspector"><MousePointer2 size={24} /><span>选择场景中的物体</span></aside>
   }
@@ -375,6 +515,7 @@ function Inspector({ selected, camera, selectedJoint, customPoses, onSelectJoint
   const applyPreset = pose => onUpdateObject({
     pose: normalizePoseId(pose),
     poseTime: presetPhase(pose),
+    continuousMotion: poseCanLoop(pose) ? Boolean(selected.continuousMotion) : false,
     rigRoot: presetRoot(),
     joints: presetJoints(),
   })
@@ -383,7 +524,8 @@ function Inspector({ selected, camera, selectedJoint, customPoses, onSelectJoint
       <div className="inspector-head">
         <div><small>{isCamera ? 'CAMERA' : typeLabel}</small>{isCamera ? <strong>主摄像机</strong> : <input className="inspector-name-input" value={selected.name} onChange={event => onUpdateObject({ name: event.target.value })} aria-label="物体名称" />}</div>
         <div className="inspector-head-actions">
-          <ToolButton icon={Focus} label="聚焦" onClick={onFocus} />
+          <ToolButton icon={Focus} label="视图聚焦" onClick={onFocus} />
+          {!isCamera && <ToolButton icon={Camera} label="摄像机对准" onClick={onAimCamera} />}
           {!isCamera && <ToolButton icon={selected.locked ? Unlock : Lock} label={selected.locked ? '解除锁定' : '锁定'} onClick={onToggleLock} />}
           {!isCamera && <ToolButton icon={Copy} label="复制" onClick={onDuplicate} />}
           {!isCamera && <ToolButton icon={Trash2} label="删除" onClick={onDelete} />}
@@ -418,7 +560,7 @@ function Inspector({ selected, camera, selectedJoint, customPoses, onSelectJoint
               <input type="checkbox" checked={canLoopPose && Boolean(selected.continuousMotion)} disabled={!canLoopPose} onChange={event => onUpdateObject({ continuousMotion: event.target.checked })} />
               <span><strong>随时间轴循环动作</strong><small>{canLoopPose ? '播放、拖帧和导出时持续循环' : '当前预设是固定姿势，不支持循环'}</small></span>
             </label>
-            <p className="pose-source-note">动作来源：Three.js 官方 X-Bot 骨骼动画。当前模型没有面部骨骼或表情，只提供身体、头颈和四肢动作。</p>
+            <p className="pose-source-note">角色状态关键帧会记录动作、相位、循环开关和完整骨骼，并在对应帧切换。动作来源：Three.js 官方 X-Bot；当前模型没有面部表情。</p>
             <div className="pose-library">
               <div className="pose-library-head"><span>动作库</span><small>{RIG_PRESET_OPTIONS.length} PRESETS</small></div>
               {RIG_PRESET_GROUPS.map(group => (
@@ -547,7 +689,9 @@ function Timeline({ currentFrame, fps, totalFrames, onSeek, playing, onTogglePla
         const isDragged = dragging?.kind === kind && dragging?.trackId === trackId && dragging?.fromFrame === key.frame
         const displayFrame = isDragged ? dragging.toFrame : key.frame
         const isSelected = selectedKeyframe?.kind === kind && selectedKeyframe?.trackId === trackId && selectedKeyframe?.frame === key.frame
-        return <button key={key.frame} className={`keyframe ${kind} ${key.frame === currentFrame ? 'is-current' : ''} ${isSelected ? 'is-selected' : ''}`} data-interpolation={normalizeInterpolation(key.interpolation)} style={{ left: `${displayFrame / totalFrames * 100}%` }} title={`第 ${key.frame} 帧 · ${normalizeInterpolation(key.interpolation) === 'smooth' ? '平滑' : normalizeInterpolation(key.interpolation) === 'linear' ? '线性' : '保持'} · 拖动可移动`} onPointerDown={event => beginKeyDrag(event, key, kind, trackId)} onDoubleClick={event => { event.stopPropagation(); onDelete(key.frame); onSelectKeyframe(null) }} />
+        const stateCopy = kind === 'object' && objectTrack?.type === 'person' ? ` · ${poseLabel(key.pose)}${key.continuousMotion ? '（持续）' : ''}` : ''
+        const title = `第 ${key.frame} 帧${stateCopy} · ${normalizeInterpolation(key.interpolation) === 'smooth' ? '平滑' : normalizeInterpolation(key.interpolation) === 'linear' ? '线性' : '保持'} · 拖动可移动`
+        return <button key={key.frame} className={`keyframe ${kind} ${key.frame === currentFrame ? 'is-current' : ''} ${isSelected ? 'is-selected' : ''}`} data-interpolation={normalizeInterpolation(key.interpolation)} style={{ left: `${displayFrame / totalFrames * 100}%` }} title={title} aria-label={title} onPointerDown={event => beginKeyDrag(event, key, kind, trackId)} onDoubleClick={event => { event.stopPropagation(); onDelete(key.frame); onSelectKeyframe(null) }} />
       })}
       <div className="playhead" style={{ left: `${currentFrame / totalFrames * 100}%` }}><i /></div>
     </div>
@@ -562,7 +706,7 @@ function Timeline({ currentFrame, fps, totalFrames, onSeek, playing, onTogglePla
         <div className="timeline-key-editor">
           {selectedKeyframe ? (
             <>
-              <span>{selectedKeyframe.kind === 'camera' ? '镜头' : '物体'} · {selectedKeyframe.frame} 帧</span>
+              <span>{selectedKeyframe.kind === 'camera' ? '镜头' : objectTrack?.type === 'person' ? '角色状态' : '物体'} · {selectedKeyframe.frame} 帧</span>
               <select value={selectedKeyframe.interpolation} onChange={event => onChangeInterpolation(event.target.value)} title="插值方式">
                 <option value="smooth">平滑</option>
                 <option value="linear">线性</option>
@@ -582,7 +726,7 @@ function Timeline({ currentFrame, fps, totalFrames, onSeek, playing, onTogglePla
           <>
             <div className="track-label object-track-label">{objectTrack.type === 'person' ? <UserRound size={13} /> : <Box size={13} />}<span>{objectTrack.name}</span></div>
             <div className="object-track-slot">{renderTrack(objectTrack.keyframes, 'object', onDeleteObjectKeyframe, objectTrack.id)}</div>
-            <button className="keyframe-button object-keyframe-button" onClick={onAddObjectKeyframe}><Plus size={13} /> 物体关键帧</button>
+            <button className="keyframe-button object-keyframe-button" onClick={onAddObjectKeyframe}><Plus size={13} /> {objectTrack.type === 'person' ? '角色状态关键帧' : '物体关键帧'}</button>
           </>
         )}
       </div>
@@ -593,6 +737,11 @@ function Timeline({ currentFrame, fps, totalFrames, onSeek, playing, onTogglePla
 export default function App() {
   const startupProject = useMemo(() => readCachedProject(), [])
   const [settings, setSettings] = useState(() => normalizeProjectSettings(startupProject?.settings))
+  const [shots, setShots] = useState(() => startupProject?.shots || [{
+    id: 'shot-01', name: '镜头 01', thumbnail: '', fps: DEFAULT_PROJECT_SETTINGS.fps, durationSeconds: DEFAULT_PROJECT_SETTINGS.durationSeconds, loopPlayback: false,
+    objects: cloneProjectValue(initialObjects), camera: cloneProjectValue(initialCamera), keyframes: [], objectKeyframes: {},
+  }])
+  const [activeShotId, setActiveShotId] = useState(() => startupProject?.activeShotId || 'shot-01')
   const [objects, setObjects] = useState(() => startupProject?.objects || initialObjects)
   const [selectedId, setSelectedId] = useState(() => startupProject?.objects?.[0]?.id || 'actor-lead')
   const [selectedJoint, setSelectedJoint] = useState('mixamorigSpine2')
@@ -620,6 +769,7 @@ export default function App() {
   const currentFrameRef = useRef(0)
   const exportCanvasRef = useRef(null)
   const imageCaptureCanvasRef = useRef(null)
+  const monitorCanvasRef = useRef(null)
   const historyRef = useRef({ past: [], future: [], last: '', timer: null, restoring: false })
   const latestProjectRef = useRef(null)
 
@@ -628,6 +778,17 @@ export default function App() {
 
   const selected = useMemo(() => selectedId === CAMERA_ID ? { id: CAMERA_ID } : objects.find(object => object.id === selectedId), [objects, selectedId])
   const activeObject = useMemo(() => selected?.id && selected.id !== CAMERA_ID ? selected : null, [selected])
+  const activeShot = useMemo(() => shots.find(shot => shot.id === activeShotId) || shots[0], [activeShotId, shots])
+  const displayedShots = useMemo(() => shots.map(shot => shot.id === activeShotId ? {
+    ...shot,
+    fps: settings.fps,
+    durationSeconds: settings.durationSeconds,
+    loopPlayback: settings.loopPlayback,
+    objects,
+    camera,
+    keyframes,
+    objectKeyframes: characterKeyframes,
+  } : shot), [activeShotId, camera, characterKeyframes, keyframes, objects, settings.durationSeconds, settings.fps, settings.loopPlayback, shots])
   const maxKeyframeFrame = useMemo(() => Math.max(0, ...keyframes.map(key => key.frame), ...Object.values(characterKeyframes).flatMap(track => (track || []).map(key => key.frame))), [characterKeyframes, keyframes])
   const selectedKeyframeInfo = useMemo(() => {
     if (!selectedKeyframe) return null
@@ -639,9 +800,9 @@ export default function App() {
   const isAnimating = playing || exporting
   const hasObjectAnimation = useMemo(() => Object.values(characterKeyframes).some(track => track?.length), [characterKeyframes])
   const animatedObjects = useMemo(() => {
-    const framedObjects = hasObjectAnimation ? objectsAtFrame(objects, characterKeyframes, currentFrame) : objects
+    const framedObjects = hasObjectAnimation ? objectsAtFrame(objects, characterKeyframes, currentFrame, fps) : objects
     return framedObjects.map(object => objectDrafts[object.id] || object)
-  }, [hasObjectAnimation, objects, characterKeyframes, currentFrame, objectDrafts])
+  }, [hasObjectAnimation, objects, characterKeyframes, currentFrame, fps, objectDrafts])
   const inspectorSelected = useMemo(() => selectedId === CAMERA_ID ? selected : animatedObjects.find(object => object.id === selectedId), [animatedObjects, selected, selectedId])
   const displayCamera = isAnimating ? animatedCamera : camera
   const previewAspect = aspectValue(displayCamera.aspectRatio)
@@ -653,7 +814,9 @@ export default function App() {
     camera,
     keyframes,
     objectKeyframes: characterKeyframes,
-  }), [settings, objects, camera, keyframes, characterKeyframes])
+    shots,
+    activeShotId,
+  }), [settings, objects, camera, keyframes, characterKeyframes, shots, activeShotId])
 
   useEffect(() => {
     currentFrameRef.current = currentFrame
@@ -706,21 +869,24 @@ export default function App() {
   }, [currentProject])
 
   const applyProjectSnapshot = useCallback(snapshot => {
-    const snapshotSettings = normalizeProjectSettings(snapshot.settings)
-    setSettings(snapshotSettings)
-    setObjects(snapshot.objects || initialObjects)
-    setCamera({ ...initialCamera, ...(snapshot.camera || {}) })
-    setKeyframes(normalizeKeyframes(snapshot.keyframes || []))
-    setCharacterKeyframes(normalizeObjectTracks(snapshot.objectKeyframes || snapshot.characterKeyframes || {}))
+    const normalized = normalizeProjectData(snapshot)
+    if (!normalized) return
+    setSettings(normalized.settings)
+    setShots(normalized.shots)
+    setActiveShotId(normalized.activeShotId)
+    setObjects(normalized.objects)
+    setCamera(normalized.camera)
+    setKeyframes(normalized.keyframes)
+    setCharacterKeyframes(normalized.objectKeyframes)
     setObjectDrafts({})
     setSelectedKeyframe(null)
     setPlaying(false)
     setCurrentFrame(frame => {
-      const nextFrame = clamp(frame, 0, snapshotSettings.fps * snapshotSettings.durationSeconds)
+      const nextFrame = clamp(frame, 0, normalized.settings.fps * normalized.settings.durationSeconds)
       currentFrameRef.current = nextFrame
       return nextFrame
     })
-    setSelectedId(current => current === CAMERA_ID || snapshot.objects?.some(object => object.id === current) ? current : snapshot.objects?.[0]?.id || CAMERA_ID)
+    setSelectedId(current => current === CAMERA_ID || normalized.objects.some(object => object.id === current) ? current : normalized.objects[0]?.id || CAMERA_ID)
   }, [])
 
   const flushHistory = useCallback(() => {
@@ -762,19 +928,26 @@ export default function App() {
 
   const focusSelected = useCallback(() => {
     if (selectedId === CAMERA_ID) {
-      setViewFocusRequest({ position: [...camera.position], height: 0, distance: 4, nonce: Date.now() })
+      setViewFocusRequest({ position: [...displayCamera.position], height: 0, distance: 4, nonce: Date.now() })
       return
     }
-    const object = objects.find(item => item.id === selectedId)
+    const object = animatedObjects.find(item => item.id === selectedId)
     if (!object) return
     const maxScale = Math.max(...(object.scale || [1, 1, 1]).map(value => Math.abs(value) || 1))
     setViewFocusRequest({
-      position: [...object.position],
-      height: object.type === 'person' ? 1 : Math.min(maxScale * 0.45, 2),
+      position: visualCenterForObject(object),
+      height: 0,
       distance: clamp(maxScale * 4.5, 2.8, 14),
       nonce: Date.now(),
     })
-  }, [camera.position, objects, selectedId])
+  }, [animatedObjects, displayCamera.position, selectedId])
+
+  const aimCameraAtSelected = useCallback(() => {
+    if (!inspectorSelected || inspectorSelected.id === CAMERA_ID) return
+    const target = visualCenterForObject(inspectorSelected)
+    setCamera(current => ({ ...current, target }))
+    setToast(`摄像机已对准“${inspectorSelected.name}”当前帧位置`)
+  }, [inspectorSelected])
 
   const seekToFrame = useCallback(frame => {
     const nextFrame = clamp(Math.round(frame), 0, totalFrames)
@@ -859,6 +1032,7 @@ export default function App() {
     }
     setPlaying(false)
     setSettings(next)
+    setShots(list => list.map(shot => shot.id === activeShotId ? { ...shot, fps: next.fps, durationSeconds: next.durationSeconds, loopPlayback: next.loopPlayback } : shot))
     setCurrentFrame(frame => {
       const nextFrame = clamp(frame, 0, nextTotalFrames)
       currentFrameRef.current = nextFrame
@@ -866,6 +1040,132 @@ export default function App() {
     })
     setSettingsOpen(false)
     setToast(`镜头设置已更新 · ${next.fps} FPS · ${next.durationSeconds} 秒`)
+  }
+
+  const thumbnailFromMonitor = () => {
+    const source = monitorCanvasRef.current
+    if (!source?.width || !source?.height) return ''
+    try {
+      const canvas = document.createElement('canvas')
+      canvas.width = 240
+      canvas.height = 135
+      const context = canvas.getContext('2d')
+      context.fillStyle = '#11110f'
+      context.fillRect(0, 0, canvas.width, canvas.height)
+      const scale = Math.min(canvas.width / source.width, canvas.height / source.height)
+      const width = source.width * scale
+      const height = source.height * scale
+      context.drawImage(source, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height)
+      return canvas.toDataURL('image/jpeg', 0.74)
+    } catch {
+      return ''
+    }
+  }
+
+  const liveShotRecord = (shot, thumbnail = shot?.thumbnail || '') => ({
+    ...shot,
+    id: shot?.id || activeShotId,
+    name: shot?.name || '镜头',
+    thumbnail,
+    fps: settings.fps,
+    durationSeconds: settings.durationSeconds,
+    loopPlayback: settings.loopPlayback,
+    objects,
+    camera,
+    keyframes,
+    objectKeyframes: characterKeyframes,
+  })
+
+  const applyShotState = shot => {
+    setPlaying(false)
+    setObjectDrafts({})
+    setSelectedKeyframe(null)
+    setKeyframeClipboard(null)
+    setSettings(current => ({ ...current, fps: shot.fps, durationSeconds: shot.durationSeconds, loopPlayback: shot.loopPlayback }))
+    setObjects(cloneProjectValue(shot.objects))
+    setCamera(cloneProjectValue(shot.camera))
+    setKeyframes(cloneProjectValue(shot.keyframes || []))
+    setCharacterKeyframes(cloneProjectValue(shot.objectKeyframes || {}))
+    setCurrentFrame(0)
+    currentFrameRef.current = 0
+    setActiveShotId(shot.id)
+    setSelectedId(shot.objects?.[0]?.id || CAMERA_ID)
+  }
+
+  const switchShot = shotId => {
+    if (shotId === activeShotId) return
+    const target = shots.find(shot => shot.id === shotId)
+    if (!target) return
+    const thumbnail = thumbnailFromMonitor()
+    setShots(list => list.map(shot => shot.id === activeShotId ? liveShotRecord(shot, thumbnail || shot.thumbnail) : shot))
+    applyShotState(target)
+    setToast(`已切换到“${target.name}”`)
+  }
+
+  const addShot = () => {
+    if (shots.length >= 30) { setToast('每个工程最多 30 个镜头'); return }
+    const thumbnail = thumbnailFromMonitor()
+    const id = `shot-${uid()}`
+    const nextShot = {
+      id,
+      name: uniqueShotName(shots, defaultShotName(shots.length)),
+      thumbnail,
+      fps: settings.fps,
+      durationSeconds: settings.durationSeconds,
+      loopPlayback: settings.loopPlayback,
+      objects: cloneProjectValue(objects),
+      camera: cloneProjectValue(camera),
+      keyframes: [],
+      objectKeyframes: {},
+    }
+    setShots(list => [...list.map(shot => shot.id === activeShotId ? liveShotRecord(shot, thumbnail || shot.thumbnail) : shot), nextShot])
+    applyShotState(nextShot)
+    setToast(`已新建“${nextShot.name}” · 场景已复制，关键帧为空`)
+  }
+
+  const duplicateShot = shotId => {
+    if (shots.length >= 30) { setToast('每个工程最多 30 个镜头'); return }
+    const thumbnail = thumbnailFromMonitor()
+    const storedSource = shots.find(shot => shot.id === shotId)
+    if (!storedSource) return
+    const source = shotId === activeShotId ? liveShotRecord(storedSource, thumbnail || storedSource.thumbnail) : storedSource
+    const duplicate = cloneProjectValue({ ...source, id: `shot-${uid()}`, name: uniqueShotName(shots, `${source.name} 副本`) })
+    setShots(list => {
+      const persisted = list.map(shot => shot.id === activeShotId ? liveShotRecord(shot, thumbnail || shot.thumbnail) : shot)
+      const sourceIndex = persisted.findIndex(shot => shot.id === shotId)
+      return [...persisted.slice(0, sourceIndex + 1), duplicate, ...persisted.slice(sourceIndex + 1)]
+    })
+    applyShotState(duplicate)
+    setToast(`已复制“${source.name}”`)
+  }
+
+  const deleteShot = shotId => {
+    if (shots.length <= 1) return
+    const sourceIndex = shots.findIndex(shot => shot.id === shotId)
+    const source = shots[sourceIndex]
+    if (!source || !window.confirm(`删除镜头“${source.name}”？`)) return
+    const thumbnail = thumbnailFromMonitor()
+    const persisted = shots.map(shot => shot.id === activeShotId ? liveShotRecord(shot, thumbnail || shot.thumbnail) : shot)
+    const remaining = persisted.filter(shot => shot.id !== shotId)
+    setShots(remaining)
+    if (shotId === activeShotId) applyShotState(remaining[Math.min(sourceIndex, remaining.length - 1)])
+    setToast(`已删除“${source.name}”`)
+  }
+
+  const renameShot = (shotId, name, commit = false) => setShots(list => {
+    const index = list.findIndex(shot => shot.id === shotId)
+    if (index < 0) return list
+    const draft = String(name || '').slice(0, 30)
+    const nextName = commit ? (draft.trim() || defaultShotName(index)) : draft
+    return list.map(shot => shot.id === shotId ? { ...shot, name: nextName } : shot)
+  })
+
+  const captureShotThumbnail = shotId => {
+    if (shotId !== activeShotId) { setToast('请先切换到该镜头再更新缩略图'); return }
+    const thumbnail = thumbnailFromMonitor()
+    if (!thumbnail) { setToast('摄像机画面尚未准备好，请稍后重试'); return }
+    setShots(list => list.map(shot => shot.id === shotId ? { ...shot, thumbnail } : shot))
+    setToast('镜头缩略图已更新')
   }
 
   const addPerson = bodyType => {
@@ -897,7 +1197,7 @@ export default function App() {
   }
   const updateObjectById = (id, patch) => {
     setObjectDrafts(drafts => {
-      const source = drafts[id] || objectAtFrame(objects.find(object => object.id === id), characterKeyframes[id], currentFrame)
+      const source = drafts[id] || objectAtFrame(objects.find(object => object.id === id), characterKeyframes[id], currentFrame, fps)
       return source ? { ...drafts, [id]: { ...source, ...patch } } : drafts
     })
     setObjects(list => list.map(object => object.id === id ? { ...object, ...patch } : object))
@@ -994,7 +1294,7 @@ export default function App() {
       delete nextDrafts[activeObject.id]
       return nextDrafts
     })
-    setToast(`已记录“${activeObject.name}”第 ${currentFrame} 帧`)
+    setToast(activeObject.type === 'person' ? `已记录“${activeObject.name}”第 ${currentFrame} 帧角色状态` : `已记录“${activeObject.name}”第 ${currentFrame} 帧`)
   }
   const deleteObjectKeyframe = frame => {
     if (!activeObject) return
@@ -1053,7 +1353,7 @@ export default function App() {
     else if (activeObject?.id === selectedKeyframeInfo.trackId) deleteObjectKeyframe(selectedKeyframeInfo.frame)
   }
   const saveProject = ({ download = false } = {}) => {
-    const data = projectData({ settings, objects, camera, keyframes, objectKeyframes: characterKeyframes })
+    const data = projectData({ settings, objects, camera, keyframes, objectKeyframes: characterKeyframes, shots, activeShotId })
     const serialized = JSON.stringify(data)
     let cached = true
     try { localStorage.setItem(PROJECT_STORAGE_KEY, serialized) } catch { cached = false }
@@ -1184,20 +1484,15 @@ export default function App() {
     const reader = new FileReader()
     reader.onload = () => {
       try {
-        const data = JSON.parse(reader.result)
-        const loadedObjects = (data.objects || initialObjects).map(normalizePerson)
-        const loadedTracks = normalizeObjectTracks(data.objectKeyframes || data.characterKeyframes || {})
-        const loadedCameraKeys = normalizeKeyframes(data.keyframes || initialKeyframes)
-        const maxLoadedFrame = Math.max(0, ...loadedCameraKeys.map(key => key.frame), ...Object.values(loadedTracks).flatMap(track => (track || []).map(key => key.frame)))
-        const baseSettings = normalizeProjectSettings(data.settings)
-        const loadedSettings = maxLoadedFrame > baseSettings.fps * baseSettings.durationSeconds
-          ? { ...baseSettings, durationSeconds: clamp(Math.ceil(maxLoadedFrame / baseSettings.fps), 1, 60) }
-          : baseSettings
-        setSettings(loadedSettings)
-        setObjects(loadedObjects)
-        setCamera({ ...initialCamera, ...(data.camera || {}) })
-        setKeyframes(loadedCameraKeys)
-        setCharacterKeyframes(Object.keys(loadedTracks).length ? loadedTracks : fallbackCharacterKeyframes(loadedObjects))
+        const loaded = normalizeProjectData(JSON.parse(reader.result))
+        if (!loaded) throw new Error('invalid project')
+        setSettings(loaded.settings)
+        setShots(loaded.shots)
+        setActiveShotId(loaded.activeShotId)
+        setObjects(loaded.objects)
+        setCamera(loaded.camera)
+        setKeyframes(loaded.keyframes)
+        setCharacterKeyframes(loaded.objectKeyframes)
         setObjectDrafts({})
         setSelectedKeyframe(null)
         setCurrentFrame(0)
@@ -1205,16 +1500,20 @@ export default function App() {
         setPlaying(false)
         setSettingsOpen(false)
         setSelectedId(CAMERA_ID)
-        setToast(`工程已打开 · ${loadedSettings.fps} FPS · ${loadedSettings.durationSeconds} 秒`)
+        setToast(`工程已打开 · ${loaded.shots.length} 个镜头`)
       } catch { setToast('工程文件无法读取') }
     }
     reader.readAsText(file)
     event.target.value = ''
   }
   const resetProject = () => {
-    setSettings(DEFAULT_PROJECT_SETTINGS)
-    setObjects(initialObjects)
-    setCamera(initialCamera)
+    const resetObjects = cloneProjectValue(initialObjects)
+    const resetCamera = cloneProjectValue(initialCamera)
+    setSettings({ ...DEFAULT_PROJECT_SETTINGS })
+    setShots([{ id: 'shot-01', name: '镜头 01', thumbnail: '', fps: 24, durationSeconds: 5, loopPlayback: false, objects: resetObjects, camera: resetCamera, keyframes: [], objectKeyframes: {} }])
+    setActiveShotId('shot-01')
+    setObjects(resetObjects)
+    setCamera(resetCamera)
     setKeyframes(initialKeyframes)
     setCharacterKeyframes(initialCharacterKeyframes)
     setObjectDrafts({})
@@ -1243,7 +1542,7 @@ export default function App() {
           <ToolButton icon={Undo2} label="撤销" shortcut="Ctrl+Z" onClick={undo} disabled={!historyRef.current.past.length} />
           <ToolButton icon={Redo2} label="重做" shortcut="Ctrl+Y" onClick={redo} disabled={!historyRef.current.future.length} />
         </nav>
-        <div className="project-title"><i className={`status-dot ${saveStatus === '保存中…' ? '' : 'live'}`} /><button type="button" onClick={() => setSettingsOpen(true)} title="打开镜头设置"><span>{settings.name}</span><Settings2 size={12} /></button><small>{saveStatus}</small></div>
+        <div className="project-title"><i className={`status-dot ${saveStatus === '保存中…' ? '' : 'live'}`} /><button type="button" onClick={() => setSettingsOpen(true)} title="打开镜头设置"><span>{settings.name}</span><Settings2 size={12} /></button><small>{activeShot?.name} · {saveStatus}</small></div>
         <div className="export-actions">
           <button className="project-export-button" onClick={() => saveProject({ download: true })} disabled={exporting || capturingImage}><Download size={14} /> 导出工程</button>
           <button className="project-export-button capture-image-button" onClick={handleCaptureImage} disabled={exporting || capturingImage}><FileImage size={14} /> {capturingImage ? '截图中…' : '截图 PNG'}</button>
@@ -1252,7 +1551,7 @@ export default function App() {
       </header>
 
       <div className="workspace">
-        <LeftSidebar objects={objects} selectedId={selectedId} onSelect={setSelectedId} onAddPerson={addPerson} onAddPrimitive={addPrimitive} onImport={importModel} onToggleVisible={id => updateObjectById(id, { visible: objects.find(item => item.id === id)?.visible === false })} onToggleLock={id => updateObjectById(id, { locked: !objects.find(item => item.id === id)?.locked })} />
+        <LeftSidebar objects={objects} selectedId={selectedId} onSelect={setSelectedId} onAddPerson={addPerson} onAddPrimitive={addPrimitive} onImport={importModel} onToggleVisible={id => updateObjectById(id, { visible: objects.find(item => item.id === id)?.visible === false })} onToggleLock={id => updateObjectById(id, { locked: !objects.find(item => item.id === id)?.locked })} shots={displayedShots} activeShotId={activeShotId} onSelectShot={switchShot} onAddShot={addShot} onDuplicateShot={duplicateShot} onDeleteShot={deleteShot} onRenameShot={renameShot} onCaptureShot={captureShotThumbnail} />
         <section className="viewport-shell">
           <div className="viewport-toolbar floating-panel">
             <ToolButton icon={MousePointer2} label="选择" active={!['translate', 'rotate', 'scale'].includes(transformMode)} onClick={() => setTransformMode('select')} shortcut="Q" />
@@ -1278,7 +1577,7 @@ export default function App() {
             <div className="monitor-head"><div><Video size={13} /><strong>摄像机 01</strong><span>SHOT PREVIEW</span></div><button onClick={() => setSelectedId(CAMERA_ID)}><ZoomIn size={13} /></button></div>
             <div className="monitor-frame">
               <div className={`monitor-canvas ${previewAspectClass}`} style={{ '--preview-aspect': previewAspect }}>
-                <CameraPreview objects={animatedObjects} animationTime={currentFrame / fps} cameraData={displayCamera} />
+                <CameraPreview objects={animatedObjects} animationTime={currentFrame / fps} cameraData={displayCamera} onCanvasReady={canvas => { monitorCanvasRef.current = canvas }} />
                 <span className="safe-frame" />
                 <span className="owner-watermark" aria-label="MONOFORM 品牌标识"><i><img src={BRAND_MARK_URL} alt="" /></i><b>MONOFORM</b></span>
                 <span className="monitor-timecode">{timecodeAtFrame(currentFrame, fps)}</span>
@@ -1287,7 +1586,7 @@ export default function App() {
             </div>
           </div>
         </section>
-        <Inspector selected={inspectorSelected} camera={camera} selectedJoint={selectedJoint} customPoses={customPoses} onSelectJoint={setSelectedJoint} onUpdateObject={updateSelected} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} onDelete={deleteSelected} onDuplicate={duplicateSelected} onFocus={focusSelected} onToggleLock={() => activeObject && updateSelected({ locked: !activeObject.locked })} onSaveCustomPose={saveCustomPose} onApplyCustomPose={applyCustomPose} onDeleteCustomPose={deleteCustomPose} />
+        <Inspector selected={inspectorSelected} camera={camera} selectedJoint={selectedJoint} customPoses={customPoses} onSelectJoint={setSelectedJoint} onUpdateObject={updateSelected} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} onDelete={deleteSelected} onDuplicate={duplicateSelected} onFocus={focusSelected} onAimCamera={aimCameraAtSelected} onToggleLock={() => activeObject && updateSelected({ locked: !activeObject.locked })} onSaveCustomPose={saveCustomPose} onApplyCustomPose={applyCustomPose} onDeleteCustomPose={deleteCustomPose} />
         <Timeline
           currentFrame={currentFrame}
           fps={fps}

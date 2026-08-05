@@ -918,6 +918,7 @@ function SceneObject({ data, selected, activeJoint, transformMode, onSelect, onU
   const groupRef = useRef(null)
   const objectRotateDrag = useRef(null)
   const orbitControls = useThree(state => state.controls)
+  const stateAnimationTime = Math.max(0, animationTime - (Number.isFinite(data.motionStartTime) ? data.motionStartTime : 0))
   const syncTransform = useCallback(() => {
     const object = groupRef.current
     if (!object) return
@@ -991,7 +992,7 @@ function SceneObject({ data, selected, activeJoint, transformMode, onSelect, onU
           pose={data.pose}
           poseTime={data.poseTime}
           continuousMotion={data.continuousMotion}
-          animationTime={animationTime}
+          animationTime={stateAnimationTime}
           rigRoot={data.rigRoot}
           joints={data.joints}
           footLock={data.footLock}
@@ -1184,7 +1185,7 @@ export function CameraPreview({ objects, cameraData, animationTime = 0, onCanvas
       shadows="basic"
       dpr={exportMode ? 1 : [1, 1.5]}
       camera={{ position: cameraData.position, fov: 40, near: 0.05, far: 200 }}
-      gl={{ antialias: true, preserveDrawingBuffer: exportMode, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.9 }}
+      gl={{ antialias: true, preserveDrawingBuffer: exportMode || Boolean(onCanvasReady), toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.9 }}
       onCreated={({ gl }) => onCanvasReady?.(gl.domElement)}
     >
       <PreviewScene objects={objects} cameraData={cameraData} animationTime={animationTime} />
