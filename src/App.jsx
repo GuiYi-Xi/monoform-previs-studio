@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Box, BoxSelect, Camera, ChevronDown, CircleDot, Copy, Download,
+  Box, BoxSelect, Camera, ChevronDown, ChevronUp, CircleDot, Copy, Download,
   FileImage, FileVideo2, Focus, FolderOpen, Grid3X3, Import, Lock, MousePointer2, Move3D, Pause, Play, Plus,
   Redo2, RotateCw, Save, Settings2, SkipBack, SkipForward, Sparkles,
   ScanLine, Trash2, Undo2, UserRound, Video, ZoomIn,
@@ -844,6 +844,7 @@ function ReferenceOverlay({ reference, onChange, onToast }) {
   const inputRef = useRef(null)
   const dragRef = useRef(null)
   const [editing, setEditing] = useState(false)
+  const [expanded, setExpanded] = useState(true)
   const update = patch => onChange(current => normalizeReference({ ...current, ...patch }))
   const upload = async event => {
     const file = event.target.files?.[0]
@@ -853,6 +854,7 @@ function ReferenceOverlay({ reference, onChange, onToast }) {
       const image = await referenceImageFromFile(file)
       onChange(normalizeReference({ ...DEFAULT_REFERENCE, image, name: file.name }))
       setEditing(false)
+      setExpanded(true)
       onToast(`参考图“${file.name}”已加入工作区`)
     } catch (error) {
       onToast(error.message || '参考图上传失败')
@@ -882,17 +884,24 @@ function ReferenceOverlay({ reference, onChange, onToast }) {
   const hasImage = Boolean(reference.image)
   return (
     <>
-      <div className={`reference-panel floating-panel ${hasImage ? 'has-image' : ''}`}>
-        <button type="button" className="reference-upload" onClick={() => inputRef.current?.click()}><FileImage size={13} /> {hasImage ? '更换参考图' : '上传参考图'}</button>
+      <div className={`reference-panel floating-panel ${hasImage ? 'has-image' : ''} ${hasImage && !expanded ? 'is-collapsed' : ''}`}>
         <input ref={inputRef} className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp" onChange={upload} />
-        {hasImage && (
+        {hasImage && !expanded ? (
+          <button type="button" className="reference-expand" title="展开参考图工具" aria-label="展开参考图工具" onClick={() => setExpanded(true)}><FileImage size={13} /><ChevronDown size={11} /></button>
+        ) : (
           <>
-            <button type="button" className={reference.visible ? 'is-active' : ''} onClick={() => update({ visible: !reference.visible })}>{reference.visible ? '隐藏' : '显示'}</button>
-            <button type="button" className={editing ? 'is-active' : ''} onClick={() => { setEditing(value => !value); update({ visible: true }) }}><Move3D size={12} /> {editing ? '锁定' : '移动图'}</button>
-            <button type="button" title="移除参考图" aria-label="移除参考图" onClick={() => { onChange(cloneProjectValue(DEFAULT_REFERENCE)); setEditing(false) }}><Trash2 size={12} /></button>
-            <label><span>透明</span><input aria-label="参考图透明度" type="range" min="0.1" max="1" step="0.05" value={reference.opacity} onChange={event => update({ opacity: Number(event.target.value) })} /></label>
-            <label><span>大小</span><input aria-label="参考图大小" type="range" min="0.25" max="2" step="0.05" value={reference.scale} onChange={event => update({ scale: Number(event.target.value) })} /></label>
-            <button type="button" onClick={() => update({ x: 0, y: 0, scale: 1 })}>居中</button>
+            <button type="button" className="reference-upload" onClick={() => inputRef.current?.click()}><FileImage size={13} /> {hasImage ? '更换参考图' : '上传参考图'}</button>
+            {hasImage && (
+              <>
+                <button type="button" className={reference.visible ? 'is-active' : ''} onClick={() => update({ visible: !reference.visible })}>{reference.visible ? '隐藏' : '显示'}</button>
+                <button type="button" className={editing ? 'is-active' : ''} onClick={() => { setEditing(value => !value); update({ visible: true }) }}><Move3D size={12} /> {editing ? '锁定' : '移动图'}</button>
+                <button type="button" title="移除参考图" aria-label="移除参考图" onClick={() => { onChange(cloneProjectValue(DEFAULT_REFERENCE)); setEditing(false); setExpanded(true) }}><Trash2 size={12} /></button>
+                <label><span>透明</span><input aria-label="参考图透明度" type="range" min="0.1" max="1" step="0.05" value={reference.opacity} onChange={event => update({ opacity: Number(event.target.value) })} /></label>
+                <label><span>大小</span><input aria-label="参考图大小" type="range" min="0.25" max="2" step="0.05" value={reference.scale} onChange={event => update({ scale: Number(event.target.value) })} /></label>
+                <button type="button" onClick={() => update({ x: 0, y: 0, scale: 1 })}>居中</button>
+                <button type="button" title="收起参考图工具" aria-label="收起参考图工具" onClick={() => { setExpanded(false); setEditing(false) }}><ChevronUp size={12} /></button>
+              </>
+            )}
           </>
         )}
       </div>

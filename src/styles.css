@@ -236,6 +236,8 @@ button:disabled { opacity: .28; cursor: not-allowed !important; }
 .reference-panel button { min-width: 28px; height: 24px; padding: 0 7px; display: flex; align-items: center; justify-content: center; gap: 4px; border: 0; border-radius: 4px; background: transparent; color: var(--text-faint); font-size: 8px; cursor: pointer; }
 .reference-panel button:hover, .reference-panel button.is-active { background: #3a3831; color: var(--accent); }
 .reference-panel .reference-upload { color: var(--text-dim); }
+.reference-panel.is-collapsed { width: auto; min-height: 30px; padding: 3px; }
+.reference-panel.is-collapsed .reference-expand { width: 36px; padding: 0; color: var(--accent); }
 .reference-panel label { height: 24px; padding: 0 5px; display: flex; align-items: center; gap: 5px; border-left: 1px solid var(--line); color: var(--text-faint); font-size: 7px; }
 .reference-panel label input { width: 70px; accent-color: var(--accent); }
 .reference-layer { position: absolute; z-index: 3; inset: 0; overflow: hidden; pointer-events: none; }
