@@ -9,13 +9,19 @@ import {
 import { MainViewport, CameraPreview } from './Viewport.jsx'
 import { JOINT_DEFINITIONS, JOINT_GROUPS, RIG_PRESET_GROUPS, RIG_PRESET_OPTIONS, cloneJointPose, interpolateJointPose, normalizePoseId, poseCanLoop, poseForObject, presetJoints, presetPhase, presetRoot } from './rig.js'
 
-const FPS = 24
-const TOTAL_FRAMES = 120
 const CAMERA_ID = '__shot_camera__'
 const PROJECT_STORAGE_KEY = 'monoform-project'
 const LEGACY_PROJECT_STORAGE_KEY = 'stageframe-project'
 const CUSTOM_POSE_STORAGE_KEY = 'monoform-custom-poses'
-const PROJECT_VERSION = 9
+const PROJECT_VERSION = 10
+const DEFAULT_PROJECT_SETTINGS = {
+  name: '未命名场景',
+  fps: 24,
+  durationSeconds: 5,
+  loopPlayback: false,
+}
+const FPS_OPTIONS = [24, 25, 30]
+const FOCAL_LENGTH_PRESETS = [18, 24, 35, 50, 85, 120]
 const BRAND_MARK_URL = `${import.meta.env.BASE_URL}branding/monoform-mark.png`
 const ASPECT_RATIOS = [
   { value: '16:9', label: '16 : 9 · 横屏视频', ratio: 16 / 9 },
@@ -72,6 +78,27 @@ const normalizeInterpolation = value => ['smooth', 'linear', 'hold'].includes(va
 const segmentAmount = (key, amount) => key?.interpolation === 'hold' ? 0 : key?.interpolation === 'linear' ? amount : ease(amount)
 const normalizeKeyframes = keys => (keys || []).map(key => ({ ...key, interpolation: normalizeInterpolation(key.interpolation) }))
 
+function normalizeProjectSettings(settings = {}) {
+  const fps = FPS_OPTIONS.includes(Number(settings.fps)) ? Number(settings.fps) : DEFAULT_PROJECT_SETTINGS.fps
+  const durationSeconds = clamp(Math.round(Number(settings.durationSeconds) || DEFAULT_PROJECT_SETTINGS.durationSeconds), 1, 60)
+  return {
+    name: String(settings.name || DEFAULT_PROJECT_SETTINGS.name).trim().slice(0, 40) || DEFAULT_PROJECT_SETTINGS.name,
+    fps,
+    durationSeconds,
+    loopPlayback: Boolean(settings.loopPlayback),
+  }
+}
+
+function timecodeAtFrame(frame, fps) {
+  const safeFrame = Math.max(0, Math.round(frame))
+  const frames = safeFrame % fps
+  const totalSeconds = Math.floor(safeFrame / fps)
+  const seconds = totalSeconds % 60
+  const minutes = Math.floor(totalSeconds / 60) % 60
+  const hours = Math.floor(totalSeconds / 3600)
+  return [hours, minutes, seconds, frames].map(value => String(value).padStart(2, '0')).join(':')
+}
+
 function normalizePerson(object) {
   if (object?.type !== 'person') return object
   const pose = normalizePoseId(object.pose)
@@ -125,15 +152,16 @@ function readCachedProject() {
     if (!data || !Array.isArray(data.objects)) return null
     if (!current && legacy) localStorage.setItem(PROJECT_STORAGE_KEY, legacy)
     const tracks = data.objectKeyframes || data.characterKeyframes || {}
-    return { ...data, objects: data.objects.map(normalizePerson), keyframes: normalizeKeyframes(data.keyframes), objectKeyframes: normalizeObjectTracks(tracks) }
+    return { ...data, settings: normalizeProjectSettings(data.settings), objects: data.objects.map(normalizePerson), keyframes: normalizeKeyframes(data.keyframes), objectKeyframes: normalizeObjectTracks(tracks) }
   } catch {
     return null
   }
 }
 
-function projectData({ objects, camera, keyframes, objectKeyframes }) {
+function projectData({ settings, objects, camera, keyframes, objectKeyframes }) {
   return {
     version: PROJECT_VERSION,
+    settings: normalizeProjectSettings(settings),
     objects,
     camera,
     keyframes,
@@ -374,6 +402,9 @@ function Inspector({ selected, camera, selectedJoint, customPoses, onSelectJoint
           <div className="inspector-section">
             <div className="section-title"><span>镜头</span><ChevronDown size={14} /></div>
             <label className="range-field"><span>焦距</span><input type="range" min="18" max="120" value={camera.focalLength} onChange={e => onUpdateCamera({ focalLength: Number(e.target.value) })} /><output>{Math.round(camera.focalLength)} mm</output></label>
+            <div className="focal-presets" aria-label="常用焦距">
+              {FOCAL_LENGTH_PRESETS.map(value => <button type="button" key={value} className={Math.round(camera.focalLength) === value ? 'is-active' : ''} onClick={() => onUpdateCamera({ focalLength: value })}>{value}</button>)}
+            </div>
             <div className="camera-info"><span>传感器</span><strong>全画幅 36 mm</strong></div>
             <label className="select-field aspect-field"><span>画面比例</span><select value={camera.aspectRatio || '16:9'} onChange={e => onUpdateCamera({ aspectRatio: e.target.value })}>{ASPECT_RATIOS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
           </div>
@@ -443,11 +474,41 @@ function Inspector({ selected, camera, selectedJoint, customPoses, onSelectJoint
   )
 }
 
-function Timeline({ currentFrame, onSeek, playing, onTogglePlay, keyframes, onAddKeyframe, onDeleteKeyframe, objectTrack, onAddObjectKeyframe, onDeleteObjectKeyframe, selectedKeyframe, onSelectKeyframe, onMoveKeyframe, onCopyKeyframe, onPasteKeyframe, onDeleteSelectedKeyframe, onChangeInterpolation, hasClipboard }) {
+function ProjectSettingsDialog({ settings, onApply, onClose }) {
+  const [draft, setDraft] = useState(settings)
+  const totalFrames = Number(draft.fps) * Number(draft.durationSeconds)
+  const submit = event => {
+    event.preventDefault()
+    onApply(normalizeProjectSettings(draft))
+  }
+  return (
+    <div className="settings-overlay" role="presentation" onPointerDown={event => { if (event.target === event.currentTarget) onClose() }}>
+      <form className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="project-settings-title" onSubmit={submit}>
+        <div className="settings-dialog-head">
+          <div><Settings2 size={17} /><span><strong id="project-settings-title">镜头设置</strong><small>工程时间与播放</small></span></div>
+          <button type="button" onClick={onClose} aria-label="关闭镜头设置">关闭</button>
+        </div>
+        <div className="settings-fields">
+          <label><span>工程名称</span><input autoFocus value={draft.name} maxLength="40" onChange={event => setDraft(current => ({ ...current, name: event.target.value }))} /></label>
+          <div className="settings-field-row">
+            <label><span>帧率</span><select value={draft.fps} onChange={event => setDraft(current => ({ ...current, fps: Number(event.target.value) }))}>{FPS_OPTIONS.map(value => <option value={value} key={value}>{value} FPS</option>)}</select></label>
+            <label><span>镜头时长</span><div className="duration-input"><input type="number" min="1" max="60" step="1" value={draft.durationSeconds} onChange={event => setDraft(current => ({ ...current, durationSeconds: event.target.value }))} /><i>秒</i></div></label>
+          </div>
+          <div className="settings-summary"><span>时间轴范围</span><strong>0–{Number.isFinite(totalFrames) ? totalFrames : 0} 帧</strong><small>{draft.fps || 0} FPS · 最长 60 秒</small></div>
+          <label className="settings-toggle"><input type="checkbox" checked={Boolean(draft.loopPlayback)} onChange={event => setDraft(current => ({ ...current, loopPlayback: event.target.checked }))} /><span><strong>循环播放</strong><small>到达镜头结尾后自动从第 0 帧继续</small></span></label>
+        </div>
+        <div className="settings-dialog-actions"><button type="button" onClick={onClose}>取消</button><button type="submit">应用设置</button></div>
+      </form>
+    </div>
+  )
+}
+
+function Timeline({ currentFrame, fps, totalFrames, onSeek, playing, onTogglePlay, keyframes, onAddKeyframe, onDeleteKeyframe, objectTrack, onAddObjectKeyframe, onDeleteObjectKeyframe, selectedKeyframe, onSelectKeyframe, onMoveKeyframe, onCopyKeyframe, onPasteKeyframe, onDeleteSelectedKeyframe, onChangeInterpolation, hasClipboard }) {
   const [dragging, setDragging] = useState(null)
+  const rulerFrames = useMemo(() => [...new Set(Array.from({ length: 6 }, (_, index) => Math.round(totalFrames * index / 5)))], [totalFrames])
   const scrub = useCallback((event, rect) => {
-    onSeek(Math.round(clamp((event.clientX - rect.left) / rect.width, 0, 1) * TOTAL_FRAMES))
-  }, [onSeek])
+    onSeek(Math.round(clamp((event.clientX - rect.left) / rect.width, 0, 1) * totalFrames))
+  }, [onSeek, totalFrames])
   const onPointerDown = event => {
     const rect = event.currentTarget.getBoundingClientRect()
     scrub(event, rect)
@@ -466,7 +527,7 @@ function Timeline({ currentFrame, onSeek, playing, onTogglePlay, keyframes, onAd
     onSelectKeyframe({ kind, frame: key.frame, trackId })
     setDragging({ kind, trackId, fromFrame: key.frame, toFrame })
     const move = moveEvent => {
-      toFrame = Math.round(clamp((moveEvent.clientX - rect.left) / rect.width, 0, 1) * TOTAL_FRAMES)
+      toFrame = Math.round(clamp((moveEvent.clientX - rect.left) / rect.width, 0, 1) * totalFrames)
       setDragging({ kind, trackId, fromFrame: key.frame, toFrame })
     }
     const up = () => {
@@ -480,15 +541,15 @@ function Timeline({ currentFrame, onSeek, playing, onTogglePlay, keyframes, onAd
   }
   const renderTrack = (frames, kind, onDelete, trackId = null) => (
     <div className={`track ${kind}-track`} onPointerDown={onPointerDown}>
-      <div className="track-fill" style={{ width: `${currentFrame / TOTAL_FRAMES * 100}%` }} />
+      <div className="track-fill" style={{ width: `${currentFrame / totalFrames * 100}%` }} />
       {!frames.length && <span className="empty-track-note">暂无关键帧</span>}
       {frames.map(key => {
         const isDragged = dragging?.kind === kind && dragging?.trackId === trackId && dragging?.fromFrame === key.frame
         const displayFrame = isDragged ? dragging.toFrame : key.frame
         const isSelected = selectedKeyframe?.kind === kind && selectedKeyframe?.trackId === trackId && selectedKeyframe?.frame === key.frame
-        return <button key={key.frame} className={`keyframe ${kind} ${key.frame === currentFrame ? 'is-current' : ''} ${isSelected ? 'is-selected' : ''}`} data-interpolation={normalizeInterpolation(key.interpolation)} style={{ left: `${displayFrame / TOTAL_FRAMES * 100}%` }} title={`第 ${key.frame} 帧 · ${normalizeInterpolation(key.interpolation) === 'smooth' ? '平滑' : normalizeInterpolation(key.interpolation) === 'linear' ? '线性' : '保持'} · 拖动可移动`} onPointerDown={event => beginKeyDrag(event, key, kind, trackId)} onDoubleClick={event => { event.stopPropagation(); onDelete(key.frame); onSelectKeyframe(null) }} />
+        return <button key={key.frame} className={`keyframe ${kind} ${key.frame === currentFrame ? 'is-current' : ''} ${isSelected ? 'is-selected' : ''}`} data-interpolation={normalizeInterpolation(key.interpolation)} style={{ left: `${displayFrame / totalFrames * 100}%` }} title={`第 ${key.frame} 帧 · ${normalizeInterpolation(key.interpolation) === 'smooth' ? '平滑' : normalizeInterpolation(key.interpolation) === 'linear' ? '线性' : '保持'} · 拖动可移动`} onPointerDown={event => beginKeyDrag(event, key, kind, trackId)} onDoubleClick={event => { event.stopPropagation(); onDelete(key.frame); onSelectKeyframe(null) }} />
       })}
-      <div className="playhead" style={{ left: `${currentFrame / TOTAL_FRAMES * 100}%` }}><i /></div>
+      <div className="playhead" style={{ left: `${currentFrame / totalFrames * 100}%` }}><i /></div>
     </div>
   )
   return (
@@ -496,8 +557,8 @@ function Timeline({ currentFrame, onSeek, playing, onTogglePlay, keyframes, onAd
       <div className="timeline-controls">
         <ToolButton icon={SkipBack} label="回到开头" onClick={() => onSeek(0)} />
         <button className={`play-button ${playing ? 'is-playing' : ''}`} onClick={onTogglePlay}>{playing ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}</button>
-        <ToolButton icon={SkipForward} label="跳到结尾" onClick={() => onSeek(TOTAL_FRAMES)} />
-        <div className="time-readout"><strong>{String(currentFrame).padStart(3, '0')}</strong><span>/ {TOTAL_FRAMES} 帧</span></div>
+        <ToolButton icon={SkipForward} label="跳到结尾" onClick={() => onSeek(totalFrames)} />
+        <div className="time-readout"><strong>{String(currentFrame).padStart(3, '0')}</strong><span>/ {totalFrames} 帧 · {fps} FPS</span></div>
         <div className="timeline-key-editor">
           {selectedKeyframe ? (
             <>
@@ -513,7 +574,7 @@ function Timeline({ currentFrame, onSeek, playing, onTogglePlay, keyframes, onAd
         </div>
       </div>
       <div className="timeline-body">
-        <div className="ruler timeline-ruler">{[0, 24, 48, 72, 96, 120].map(frame => <span key={frame} style={{ left: `${frame / TOTAL_FRAMES * 100}%` }}>{frame}</span>)}</div>
+        <div className="ruler timeline-ruler">{rulerFrames.map(frame => <span key={frame} style={{ left: `${frame / totalFrames * 100}%` }}>{frame}</span>)}</div>
         <div className="track-label camera-track-label"><Camera size={13} /><span>主摄像机</span></div>
         <div className="camera-track-slot">{renderTrack(keyframes, 'camera', onDeleteKeyframe)}</div>
         <button className="keyframe-button camera-keyframe-button" onClick={onAddKeyframe}><Plus size={13} /> 镜头关键帧</button>
@@ -531,6 +592,7 @@ function Timeline({ currentFrame, onSeek, playing, onTogglePlay, keyframes, onAd
 
 export default function App() {
   const startupProject = useMemo(() => readCachedProject(), [])
+  const [settings, setSettings] = useState(() => normalizeProjectSettings(startupProject?.settings))
   const [objects, setObjects] = useState(() => startupProject?.objects || initialObjects)
   const [selectedId, setSelectedId] = useState(() => startupProject?.objects?.[0]?.id || 'actor-lead')
   const [selectedJoint, setSelectedJoint] = useState('mixamorigSpine2')
@@ -548,6 +610,7 @@ export default function App() {
   const [capturingImage, setCapturingImage] = useState(false)
   const [exportProgress, setExportProgress] = useState(0)
   const [showGrid, setShowGrid] = useState(true)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [viewFocusRequest, setViewFocusRequest] = useState(null)
   const [toast, setToast] = useState('')
   const [saveStatus, setSaveStatus] = useState(startupProject ? '已恢复自动保存' : '自动保存已开启')
@@ -560,8 +623,12 @@ export default function App() {
   const historyRef = useRef({ past: [], future: [], last: '', timer: null, restoring: false })
   const latestProjectRef = useRef(null)
 
+  const fps = settings.fps
+  const totalFrames = fps * settings.durationSeconds
+
   const selected = useMemo(() => selectedId === CAMERA_ID ? { id: CAMERA_ID } : objects.find(object => object.id === selectedId), [objects, selectedId])
   const activeObject = useMemo(() => selected?.id && selected.id !== CAMERA_ID ? selected : null, [selected])
+  const maxKeyframeFrame = useMemo(() => Math.max(0, ...keyframes.map(key => key.frame), ...Object.values(characterKeyframes).flatMap(track => (track || []).map(key => key.frame))), [characterKeyframes, keyframes])
   const selectedKeyframeInfo = useMemo(() => {
     if (!selectedKeyframe) return null
     const track = selectedKeyframe.kind === 'camera' ? keyframes : characterKeyframes[selectedKeyframe.trackId]
@@ -581,11 +648,12 @@ export default function App() {
   const previewAspectClass = previewAspect >= 16 / 9 ? 'is-wide' : 'is-tall'
   const exportDimensions = useMemo(() => exportDimensionsForAspect(camera.aspectRatio), [camera.aspectRatio])
   const currentProject = useMemo(() => projectData({
+    settings,
     objects,
     camera,
     keyframes,
     objectKeyframes: characterKeyframes,
-  }), [objects, camera, keyframes, characterKeyframes])
+  }), [settings, objects, camera, keyframes, characterKeyframes])
 
   useEffect(() => {
     currentFrameRef.current = currentFrame
@@ -638,6 +706,8 @@ export default function App() {
   }, [currentProject])
 
   const applyProjectSnapshot = useCallback(snapshot => {
+    const snapshotSettings = normalizeProjectSettings(snapshot.settings)
+    setSettings(snapshotSettings)
     setObjects(snapshot.objects || initialObjects)
     setCamera({ ...initialCamera, ...(snapshot.camera || {}) })
     setKeyframes(normalizeKeyframes(snapshot.keyframes || []))
@@ -645,6 +715,11 @@ export default function App() {
     setObjectDrafts({})
     setSelectedKeyframe(null)
     setPlaying(false)
+    setCurrentFrame(frame => {
+      const nextFrame = clamp(frame, 0, snapshotSettings.fps * snapshotSettings.durationSeconds)
+      currentFrameRef.current = nextFrame
+      return nextFrame
+    })
     setSelectedId(current => current === CAMERA_ID || snapshot.objects?.some(object => object.id === current) ? current : snapshot.objects?.[0]?.id || CAMERA_ID)
   }, [])
 
@@ -702,13 +777,13 @@ export default function App() {
   }, [camera.position, objects, selectedId])
 
   const seekToFrame = useCallback(frame => {
-    const nextFrame = clamp(Math.round(frame), 0, TOTAL_FRAMES)
+    const nextFrame = clamp(Math.round(frame), 0, totalFrames)
     setPlaying(false)
     setObjectDrafts({})
     setCurrentFrame(nextFrame)
     currentFrameRef.current = nextFrame
     if (keyframes.length) setCamera(cameraAtFrame(keyframes, nextFrame, camera.aspectRatio))
-  }, [keyframes, camera.aspectRatio])
+  }, [keyframes, camera.aspectRatio, totalFrames])
 
   const togglePlayback = useCallback(() => {
     setPlaying(wasPlaying => {
@@ -716,7 +791,7 @@ export default function App() {
         const pausedFrame = currentFrameRef.current
         if (keyframes.length) setCamera(cameraAtFrame(keyframes, pausedFrame, camera.aspectRatio))
       }
-      if (!wasPlaying && currentFrameRef.current >= TOTAL_FRAMES) {
+      if (!wasPlaying && currentFrameRef.current >= totalFrames) {
         setCurrentFrame(0)
         currentFrameRef.current = 0
         if (keyframes.length) setCamera(cameraAtFrame(keyframes, 0, camera.aspectRatio))
@@ -724,20 +799,25 @@ export default function App() {
       if (!wasPlaying) setObjectDrafts({})
       return !wasPlaying
     })
-  }, [keyframes, camera.aspectRatio])
+  }, [keyframes, camera.aspectRatio, totalFrames])
 
   useEffect(() => {
     if (!playing) { playStartRef.current = null; return }
     let frameId
     const animate = timestamp => {
-      if (playStartRef.current === null) playStartRef.current = timestamp - currentFrame / FPS * 1000
-      const frame = Math.floor((timestamp - playStartRef.current) / 1000 * FPS)
-      if (frame >= TOTAL_FRAMES) {
-        setCurrentFrame(TOTAL_FRAMES)
-        currentFrameRef.current = TOTAL_FRAMES
-        if (keyframes.length) setCamera(cameraAtFrame(keyframes, TOTAL_FRAMES, camera.aspectRatio))
-        setPlaying(false)
-        return
+      if (playStartRef.current === null) playStartRef.current = timestamp - currentFrameRef.current / fps * 1000
+      let frame = Math.floor((timestamp - playStartRef.current) / 1000 * fps)
+      if (frame >= totalFrames) {
+        if (settings.loopPlayback) {
+          frame %= totalFrames
+          playStartRef.current = timestamp - frame / fps * 1000
+        } else {
+          setCurrentFrame(totalFrames)
+          currentFrameRef.current = totalFrames
+          if (keyframes.length) setCamera(cameraAtFrame(keyframes, totalFrames, camera.aspectRatio))
+          setPlaying(false)
+          return
+        }
       }
       setCurrentFrame(frame)
       currentFrameRef.current = frame
@@ -745,7 +825,7 @@ export default function App() {
     }
     frameId = requestAnimationFrame(animate)
     return () => cancelAnimationFrame(frameId)
-  }, [playing, keyframes, camera.aspectRatio])
+  }, [playing, keyframes, camera.aspectRatio, fps, totalFrames, settings.loopPlayback])
 
   useEffect(() => {
     const onKeyDown = event => {
@@ -769,6 +849,24 @@ export default function App() {
     const timer = setTimeout(() => setToast(''), 1800)
     return () => clearTimeout(timer)
   }, [toast])
+
+  const applySettings = nextSettings => {
+    const next = normalizeProjectSettings(nextSettings)
+    const nextTotalFrames = next.fps * next.durationSeconds
+    if (nextTotalFrames < maxKeyframeFrame) {
+      setToast(`时间轴至少要保留到第 ${maxKeyframeFrame} 帧，请延长镜头时长`)
+      return
+    }
+    setPlaying(false)
+    setSettings(next)
+    setCurrentFrame(frame => {
+      const nextFrame = clamp(frame, 0, nextTotalFrames)
+      currentFrameRef.current = nextFrame
+      return nextFrame
+    })
+    setSettingsOpen(false)
+    setToast(`镜头设置已更新 · ${next.fps} FPS · ${next.durationSeconds} 秒`)
+  }
 
   const addPerson = bodyType => {
     const id = uid()
@@ -955,7 +1053,7 @@ export default function App() {
     else if (activeObject?.id === selectedKeyframeInfo.trackId) deleteObjectKeyframe(selectedKeyframeInfo.frame)
   }
   const saveProject = ({ download = false } = {}) => {
-    const data = projectData({ objects, camera, keyframes, objectKeyframes: characterKeyframes })
+    const data = projectData({ settings, objects, camera, keyframes, objectKeyframes: characterKeyframes })
     const serialized = JSON.stringify(data)
     let cached = true
     try { localStorage.setItem(PROJECT_STORAGE_KEY, serialized) } catch { cached = false }
@@ -963,7 +1061,8 @@ export default function App() {
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
       const link = document.createElement('a')
       link.href = URL.createObjectURL(blob)
-      link.download = 'monoform-project.json'
+      const safeName = settings.name.replace(/[\\/:*?"<>|]+/g, '-').trim() || 'monoform-project'
+      link.download = `${safeName}.monoform.json`
       link.click()
       URL.revokeObjectURL(link.href)
     }
@@ -1040,15 +1139,17 @@ export default function App() {
         keyFrameInterval: 2,
         latencyMode: 'quality',
       })
-      output.addVideoTrack(videoSource, { frameRate: FPS })
+      output.addVideoTrack(videoSource, { frameRate: fps })
       await output.start()
 
-      for (let frame = 0; frame <= TOTAL_FRAMES; frame += 1) {
-        setCurrentFrame(frame)
-        currentFrameRef.current = frame
+      const exportFrameCount = totalFrames
+      for (let sample = 0; sample < exportFrameCount; sample += 1) {
+        const timelineFrame = exportFrameCount > 1 ? sample / (exportFrameCount - 1) * totalFrames : 0
+        setCurrentFrame(timelineFrame)
+        currentFrameRef.current = timelineFrame
         await nextPaint()
-        await videoSource.add(frame / FPS, 1 / FPS, { keyFrame: frame % (FPS * 2) === 0 })
-        setExportProgress(Math.round((frame + 1) / (TOTAL_FRAMES + 1) * 100))
+        await videoSource.add(sample / fps, 1 / fps, { keyFrame: sample % (fps * 2) === 0 })
+        setExportProgress(Math.round((sample + 1) / exportFrameCount * 100))
       }
 
       await output.finalize()
@@ -1058,12 +1159,13 @@ export default function App() {
       const link = document.createElement('a')
       const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
       link.href = URL.createObjectURL(blob)
-      link.download = `monoform-animation-${stamp}.mp4`
+      const safeName = settings.name.replace(/[\\/:*?"<>|]+/g, '-').trim() || 'monoform-animation'
+      link.download = `${safeName}-${stamp}.mp4`
       document.body.appendChild(link)
       link.click()
       link.remove()
       URL.revokeObjectURL(link.href)
-      setToast(`MP4 已导出 · ${width} × ${height} · 24 FPS`)
+      setToast(`MP4 已导出 · ${width} × ${height} · ${fps} FPS`)
     } catch (error) {
       if (output && output.state !== 'finalized') await output.cancel().catch(() => {})
       setToast(error?.message || 'MP4 导出失败')
@@ -1085,23 +1187,32 @@ export default function App() {
         const data = JSON.parse(reader.result)
         const loadedObjects = (data.objects || initialObjects).map(normalizePerson)
         const loadedTracks = normalizeObjectTracks(data.objectKeyframes || data.characterKeyframes || {})
+        const loadedCameraKeys = normalizeKeyframes(data.keyframes || initialKeyframes)
+        const maxLoadedFrame = Math.max(0, ...loadedCameraKeys.map(key => key.frame), ...Object.values(loadedTracks).flatMap(track => (track || []).map(key => key.frame)))
+        const baseSettings = normalizeProjectSettings(data.settings)
+        const loadedSettings = maxLoadedFrame > baseSettings.fps * baseSettings.durationSeconds
+          ? { ...baseSettings, durationSeconds: clamp(Math.ceil(maxLoadedFrame / baseSettings.fps), 1, 60) }
+          : baseSettings
+        setSettings(loadedSettings)
         setObjects(loadedObjects)
         setCamera({ ...initialCamera, ...(data.camera || {}) })
-        setKeyframes(normalizeKeyframes(data.keyframes || initialKeyframes))
+        setKeyframes(loadedCameraKeys)
         setCharacterKeyframes(Object.keys(loadedTracks).length ? loadedTracks : fallbackCharacterKeyframes(loadedObjects))
         setObjectDrafts({})
         setSelectedKeyframe(null)
         setCurrentFrame(0)
         currentFrameRef.current = 0
         setPlaying(false)
+        setSettingsOpen(false)
         setSelectedId(CAMERA_ID)
-        setToast('工程已打开')
+        setToast(`工程已打开 · ${loadedSettings.fps} FPS · ${loadedSettings.durationSeconds} 秒`)
       } catch { setToast('工程文件无法读取') }
     }
     reader.readAsText(file)
     event.target.value = ''
   }
   const resetProject = () => {
+    setSettings(DEFAULT_PROJECT_SETTINGS)
     setObjects(initialObjects)
     setCamera(initialCamera)
     setKeyframes(initialKeyframes)
@@ -1111,7 +1222,9 @@ export default function App() {
     setCurrentFrame(0)
     currentFrameRef.current = 0
     setPlaying(false)
+    setSettingsOpen(false)
     setSelectedId('actor-lead')
+    setToast('已新建空关键帧工程')
   }
 
   return (
@@ -1130,7 +1243,7 @@ export default function App() {
           <ToolButton icon={Undo2} label="撤销" shortcut="Ctrl+Z" onClick={undo} disabled={!historyRef.current.past.length} />
           <ToolButton icon={Redo2} label="重做" shortcut="Ctrl+Y" onClick={redo} disabled={!historyRef.current.future.length} />
         </nav>
-        <div className="project-title"><i className={`status-dot ${saveStatus === '保存中…' ? '' : 'live'}`} /><span>未命名场景</span><small>{saveStatus}</small></div>
+        <div className="project-title"><i className={`status-dot ${saveStatus === '保存中…' ? '' : 'live'}`} /><button type="button" onClick={() => setSettingsOpen(true)} title="打开镜头设置"><span>{settings.name}</span><Settings2 size={12} /></button><small>{saveStatus}</small></div>
         <div className="export-actions">
           <button className="project-export-button" onClick={() => saveProject({ download: true })} disabled={exporting || capturingImage}><Download size={14} /> 导出工程</button>
           <button className="project-export-button capture-image-button" onClick={handleCaptureImage} disabled={exporting || capturingImage}><FileImage size={14} /> {capturingImage ? '截图中…' : '截图 PNG'}</button>
@@ -1159,16 +1272,16 @@ export default function App() {
             <button><span className="solid-sphere" /> 实体</button>
           </div>
           <div className="viewport-label"><strong>透视视图</strong><span>场景单位 · 世界坐标</span></div>
-          <MainViewport objects={animatedObjects} animationTime={currentFrame / FPS} selectedId={selectedId} activeJoint={selectedJoint} onSelect={setSelectedId} onJointSelect={(objectId, jointId) => { setSelectedId(objectId); setSelectedJoint(jointId) }} transformMode={transformMode} onUpdateObject={updateObjectById} cameraData={displayCamera} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} showGrid={showGrid} focusRequest={viewFocusRequest} />
+          <MainViewport objects={animatedObjects} animationTime={currentFrame / fps} selectedId={selectedId} activeJoint={selectedJoint} onSelect={setSelectedId} onJointSelect={(objectId, jointId) => { setSelectedId(objectId); setSelectedJoint(jointId) }} transformMode={transformMode} onUpdateObject={updateObjectById} cameraData={displayCamera} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} showGrid={showGrid} focusRequest={viewFocusRequest} />
           <div className="navigation-hint"><span><MousePointer2 size={12} /> 左键选择</span><span>中键旋转视角</span><span>滚轮缩放</span></div>
           <div className="camera-monitor">
             <div className="monitor-head"><div><Video size={13} /><strong>摄像机 01</strong><span>SHOT PREVIEW</span></div><button onClick={() => setSelectedId(CAMERA_ID)}><ZoomIn size={13} /></button></div>
             <div className="monitor-frame">
               <div className={`monitor-canvas ${previewAspectClass}`} style={{ '--preview-aspect': previewAspect }}>
-                <CameraPreview objects={animatedObjects} animationTime={currentFrame / FPS} cameraData={displayCamera} />
+                <CameraPreview objects={animatedObjects} animationTime={currentFrame / fps} cameraData={displayCamera} />
                 <span className="safe-frame" />
                 <span className="owner-watermark" aria-label="MONOFORM 品牌标识"><i><img src={BRAND_MARK_URL} alt="" /></i><b>MONOFORM</b></span>
-                <span className="monitor-timecode">00:00:{String(Math.floor(currentFrame / FPS)).padStart(2, '0')}:{String(currentFrame % FPS).padStart(2, '0')}</span>
+                <span className="monitor-timecode">{timecodeAtFrame(currentFrame, fps)}</span>
                 <span className="monitor-focal">{Math.round(displayCamera.focalLength)} mm · {displayCamera.aspectRatio || '16:9'}</span>
               </div>
             </div>
@@ -1177,6 +1290,8 @@ export default function App() {
         <Inspector selected={inspectorSelected} camera={camera} selectedJoint={selectedJoint} customPoses={customPoses} onSelectJoint={setSelectedJoint} onUpdateObject={updateSelected} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} onDelete={deleteSelected} onDuplicate={duplicateSelected} onFocus={focusSelected} onToggleLock={() => activeObject && updateSelected({ locked: !activeObject.locked })} onSaveCustomPose={saveCustomPose} onApplyCustomPose={applyCustomPose} onDeleteCustomPose={deleteCustomPose} />
         <Timeline
           currentFrame={currentFrame}
+          fps={fps}
+          totalFrames={totalFrames}
           onSeek={seekToFrame}
           playing={playing}
           onTogglePlay={togglePlayback}
@@ -1198,24 +1313,25 @@ export default function App() {
       </div>
       {capturingImage && (
         <div className="export-render-surface" style={{ width: exportDimensions.width, height: exportDimensions.height }} aria-hidden="true">
-          <CameraPreview objects={animatedObjects} animationTime={currentFrame / FPS} cameraData={displayCamera} exportMode onCanvasReady={canvas => { imageCaptureCanvasRef.current = canvas }} />
+          <CameraPreview objects={animatedObjects} animationTime={currentFrame / fps} cameraData={displayCamera} exportMode onCanvasReady={canvas => { imageCaptureCanvasRef.current = canvas }} />
         </div>
       )}
       {exporting && (
         <>
           <div className="export-render-surface" style={{ width: exportDimensions.width, height: exportDimensions.height }} aria-hidden="true">
-            <CameraPreview objects={animatedObjects} animationTime={currentFrame / FPS} cameraData={displayCamera} exportMode onCanvasReady={canvas => { exportCanvasRef.current = canvas }} />
+            <CameraPreview objects={animatedObjects} animationTime={currentFrame / fps} cameraData={displayCamera} exportMode onCanvasReady={canvas => { exportCanvasRef.current = canvas }} />
           </div>
           <div className="export-progress-overlay" role="status" aria-live="polite">
             <div className="export-progress-card">
               <FileVideo2 size={20} />
-              <div className="export-progress-copy"><strong>正在编码 MP4</strong><span>{exportDimensions.width} × {exportDimensions.height} · 24 FPS · 第 {Math.round(exportProgress / 100 * TOTAL_FRAMES)} / {TOTAL_FRAMES} 帧</span></div>
+              <div className="export-progress-copy"><strong>正在编码 MP4</strong><span>{exportDimensions.width} × {exportDimensions.height} · {fps} FPS · 第 {Math.round(exportProgress / 100 * totalFrames)} / {totalFrames} 帧</span></div>
               <output>{exportProgress}%</output>
               <div className="export-progress-track"><i style={{ width: `${exportProgress}%` }} /></div>
             </div>
           </div>
         </>
       )}
+      {settingsOpen && <ProjectSettingsDialog settings={settings} onApply={applySettings} onClose={() => setSettingsOpen(false)} />}
       {toast && <div className="toast"><span />{toast}</div>}
     </main>
   )

@@ -46,6 +46,11 @@ button:disabled { opacity: .28; cursor: not-allowed !important; }
 .top-actions > button:not(.icon-button):hover { background: #30302d; color: var(--text); }
 .top-divider { height: 16px; width: 1px; background: var(--line); margin: 0 4px; }
 .project-title { justify-self: center; display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text-dim); }
+.project-title > button { min-width: 0; max-width: 220px; height: 27px; padding: 0 7px; display: flex; align-items: center; gap: 6px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--text-dim); cursor: pointer; }
+.project-title > button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-title > button svg { flex: 0 0 auto; color: var(--text-faint); }
+.project-title > button:hover { border-color: var(--line); background: #292926; color: var(--text); }
+.project-title > button:hover svg { color: var(--accent); }
 .project-title small { color: var(--text-faint); }
 .export-actions { display: flex; align-items: center; gap: 5px; }
 .project-export-button { border: 1px solid #464640; background: #2b2b28; }
@@ -127,6 +132,10 @@ button:disabled { opacity: .28; cursor: not-allowed !important; }
 .range-field { display: grid; grid-template-columns: 39px 1fr 47px; align-items: center; gap: 6px; font-size: 9px; color: var(--text-faint); }
 .range-field input { accent-color: var(--accent); min-width: 0; height: 3px; }
 .range-field output { text-align: right; color: var(--text-dim); font-family: "Cascadia Mono", monospace; }
+.focal-presets { margin: 10px 0 4px; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 3px; }
+.focal-presets button { height: 23px; padding: 0; border: 1px solid var(--line-soft); border-radius: 3px; background: #292926; color: var(--text-faint); font-family: "Cascadia Mono", monospace; font-size: 8px; cursor: pointer; }
+.focal-presets button:hover { border-color: #625b4a; color: var(--text); }
+.focal-presets button.is-active { border-color: var(--accent); background: #3b3324; color: #f0d8a3; }
 .camera-info { height: 27px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--line-soft); font-size: 9px; margin-top: 8px; }
 .camera-info span { color: var(--text-faint); }
 .camera-info strong { color: var(--text-dim); font-weight: 500; }
@@ -291,6 +300,38 @@ button:disabled { opacity: .28; cursor: not-allowed !important; }
 .export-progress-track i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #9d7540, var(--accent-strong)); transition: width 100ms linear; }
 .capture-image-button { border-color: rgba(112,182,158,.34) !important; color: #b8d9ce !important; }
 .capture-image-button:hover { border-color: var(--live) !important; color: #d9eee7 !important; }
+
+.settings-overlay { position: fixed; inset: 0; z-index: 110; display: grid; place-items: center; background: rgba(12,12,11,.7); backdrop-filter: blur(3px); }
+.settings-dialog { width: min(430px, calc(100vw - 32px)); overflow: hidden; border: 1px solid #575349; border-radius: 9px; background: #242421; box-shadow: 0 26px 80px rgba(0,0,0,.54); }
+.settings-dialog-head { height: 58px; padding: 0 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line-soft); }
+.settings-dialog-head > div { display: flex; align-items: center; gap: 10px; color: var(--accent); }
+.settings-dialog-head span { display: flex; flex-direction: column; gap: 3px; }
+.settings-dialog-head strong { color: var(--text); font-size: 13px; font-weight: 650; }
+.settings-dialog-head small { color: var(--text-faint); font-size: 8px; letter-spacing: .08em; }
+.settings-dialog-head > button { height: 26px; padding: 0 8px; border: 1px solid var(--line); border-radius: 4px; background: #292926; color: var(--text-faint); font-size: 9px; cursor: pointer; }
+.settings-dialog-head > button:hover { color: var(--text); border-color: #5b594f; }
+.settings-fields { padding: 16px; display: grid; gap: 13px; }
+.settings-fields > label:not(.settings-toggle), .settings-field-row > label { display: grid; gap: 6px; color: var(--text-faint); font-size: 9px; }
+.settings-fields input:not([type="checkbox"]), .settings-fields select { width: 100%; height: 32px; padding: 0 9px; border: 1px solid #41413c; border-radius: 5px; background: #1d1d1b; color: var(--text); outline: 0; }
+.settings-fields input:not([type="checkbox"]):focus, .settings-fields select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(214,168,79,.08); }
+.settings-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.duration-input { position: relative; }
+.duration-input input { padding-right: 30px !important; }
+.duration-input i { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--text-faint); font-style: normal; font-size: 9px; pointer-events: none; }
+.settings-summary { min-height: 55px; padding: 9px 11px; display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto; align-items: center; border: 1px solid var(--line-soft); border-radius: 5px; background: #1d1d1b; }
+.settings-summary span, .settings-summary small { color: var(--text-faint); font-size: 8px; }
+.settings-summary strong { color: var(--accent); font-family: "Cascadia Mono", monospace; font-size: 11px; }
+.settings-summary small { grid-column: 1 / -1; }
+.settings-toggle { min-height: 52px; padding: 9px 11px; display: flex; align-items: center; gap: 10px; border: 1px solid var(--line-soft); border-radius: 5px; background: #292926; cursor: pointer; }
+.settings-toggle input { accent-color: var(--accent); }
+.settings-toggle span { display: flex; flex-direction: column; gap: 3px; }
+.settings-toggle strong { color: var(--text-dim); font-size: 10px; }
+.settings-toggle small { color: var(--text-faint); font-size: 8px; }
+.settings-dialog-actions { height: 56px; padding: 0 16px; display: flex; align-items: center; justify-content: flex-end; gap: 7px; border-top: 1px solid var(--line-soft); background: #20201e; }
+.settings-dialog-actions button { height: 30px; padding: 0 13px; border: 1px solid #484741; border-radius: 5px; background: #2b2b28; color: var(--text-dim); font-size: 10px; cursor: pointer; }
+.settings-dialog-actions button:hover { color: var(--text); border-color: #625e53; }
+.settings-dialog-actions button[type="submit"] { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); font-weight: 650; }
+.settings-dialog-actions button[type="submit"]:hover { background: var(--accent-strong); }
 
 @media (max-width: 1180px) {
   .workspace { grid-template-columns: 210px minmax(0, 1fr) 244px; }
