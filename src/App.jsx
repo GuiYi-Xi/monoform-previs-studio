@@ -14,7 +14,7 @@ const CAMERA_ID = '__shot_camera__'
 const PROJECT_STORAGE_KEY = 'monoform-project'
 const LEGACY_PROJECT_STORAGE_KEY = 'stageframe-project'
 const CUSTOM_POSE_STORAGE_KEY = 'monoform-custom-poses'
-const PROJECT_VERSION = 12
+const PROJECT_VERSION = 13
 const DEFAULT_PROJECT_SETTINGS = {
   name: '未命名场景',
   fps: 24,
@@ -59,9 +59,11 @@ const initialObjects = [
   },
 ]
 
+const DEFAULT_CAMERA_POSITION = [7.4, 4.6, 8.2]
+const LEGACY_DEFAULT_CAMERA_TARGET = [0.2, 1.2, 0]
 const initialCamera = {
-  position: [7.4, 4.6, 8.2],
-  target: [0.2, 1.2, 0],
+  position: [...DEFAULT_CAMERA_POSITION],
+  rotation: cameraRotationToward(DEFAULT_CAMERA_POSITION, LEGACY_DEFAULT_CAMERA_TARGET),
   focalLength: 42,
   aspectRatio: '16:9',
 }
@@ -74,12 +76,58 @@ const radToDeg = value => Math.round((value * 180 / Math.PI) * 10) / 10
 const degToRad = value => Number(value || 0) * Math.PI / 180
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value))
 const lerp = (a, b, t) => a + (b - a) * t
+const lerpAngle = (a, b, t) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * t
 const ease = t => t * t * (3 - 2 * t)
 const normalizeInterpolation = value => ['smooth', 'linear', 'hold'].includes(value) ? value : 'smooth'
 const segmentAmount = (key, amount) => key?.interpolation === 'hold' ? 0 : key?.interpolation === 'linear' ? amount : ease(amount)
-const normalizeKeyframes = keys => (keys || []).map(key => ({ ...key, interpolation: normalizeInterpolation(key.interpolation) }))
 const POSE_LABELS = Object.fromEntries(RIG_PRESET_OPTIONS)
 const poseLabel = pose => POSE_LABELS[normalizePoseId(pose)] || '自定义动作'
+
+function finiteVector3(value, fallback) {
+  return Array.isArray(value) && value.length >= 3
+    ? value.slice(0, 3).map((item, index) => Number.isFinite(Number(item)) ? Number(item) : fallback[index])
+    : [...fallback]
+}
+
+function cameraRotationToward(position, target) {
+  const eye = finiteVector3(position, DEFAULT_CAMERA_POSITION)
+  const point = finiteVector3(target, LEGACY_DEFAULT_CAMERA_TARGET)
+  let dx = point[0] - eye[0]
+  let dy = point[1] - eye[1]
+  let dz = point[2] - eye[2]
+  const length = Math.hypot(dx, dy, dz)
+  if (length < 1e-8) return [0, 0, 0]
+  dx /= length; dy /= length; dz /= length
+  return [Math.asin(Math.min(1, Math.max(-1, dy))), Math.atan2(-dx, -dz), 0]
+}
+
+function normalizeCamera(camera = {}) {
+  const position = finiteVector3(camera.position, initialCamera.position)
+  const rotation = Array.isArray(camera.rotation)
+    ? finiteVector3(camera.rotation, initialCamera.rotation)
+    : cameraRotationToward(position, camera.target || LEGACY_DEFAULT_CAMERA_TARGET)
+  return {
+    position,
+    rotation,
+    focalLength: clamp(Number(camera.focalLength) || initialCamera.focalLength, 18, 120),
+    aspectRatio: ASPECT_RATIOS.some(option => option.value === camera.aspectRatio) ? camera.aspectRatio : initialCamera.aspectRatio,
+  }
+}
+
+function normalizeCameraKeyframes(keys = [], fallbackCamera = initialCamera) {
+  return (keys || []).map(key => {
+    const position = finiteVector3(key.position, fallbackCamera.position)
+    return {
+      frame: Math.max(0, Math.round(Number(key.frame) || 0)),
+      interpolation: normalizeInterpolation(key.interpolation),
+      position,
+      rotation: Array.isArray(key.rotation)
+        ? finiteVector3(key.rotation, fallbackCamera.rotation)
+        : cameraRotationToward(position, key.target || LEGACY_DEFAULT_CAMERA_TARGET),
+      focalLength: clamp(Number(key.focalLength) || fallbackCamera.focalLength, 18, 120),
+    }
+  })
+}
 
 function normalizeProjectSettings(settings = {}) {
   const fps = FPS_OPTIONS.includes(Number(settings.fps)) ? Number(settings.fps) : DEFAULT_PROJECT_SETTINGS.fps
@@ -164,7 +212,8 @@ function uniqueShotName(shots, preferred) {
 
 function normalizeShot(shot, index, fallback) {
   const objects = (Array.isArray(shot?.objects) ? shot.objects : fallback.objects).map(normalizePerson)
-  const keyframes = normalizeKeyframes(shot?.keyframes ?? fallback.keyframes ?? [])
+  const camera = normalizeCamera(shot?.camera || fallback.camera)
+  const keyframes = normalizeCameraKeyframes(shot?.keyframes ?? fallback.keyframes ?? [], camera)
   const objectKeyframes = normalizeObjectTracks(shot?.objectKeyframes || shot?.characterKeyframes || fallback.objectKeyframes || {})
   const timing = normalizeProjectSettings({
     fps: shot?.fps ?? shot?.settings?.fps ?? fallback.settings.fps,
@@ -181,7 +230,7 @@ function normalizeShot(shot, index, fallback) {
     durationSeconds: timing.durationSeconds,
     loopPlayback: timing.loopPlayback,
     objects,
-    camera: { ...initialCamera, ...(shot?.camera || fallback.camera || {}) },
+    camera,
     keyframes,
     objectKeyframes,
   }
@@ -283,7 +332,7 @@ function cameraAtFrame(keyframes, frame, aspectRatio = '16:9') {
   const t = segmentAmount(left, (frame - left.frame) / Math.max(1, right.frame - left.frame))
   return {
     position: left.position.map((value, index) => lerp(value, right.position[index], t)),
-    target: left.target.map((value, index) => lerp(value, right.target[index], t)),
+    rotation: left.rotation.map((value, index) => lerpAngle(value, right.rotation[index], t)),
     focalLength: lerp(left.focalLength, right.focalLength, t),
     aspectRatio,
   }
@@ -536,9 +585,10 @@ function Inspector({ selected, camera, selectedJoint, customPoses, onSelectJoint
         <div className="inspector-section">
           <div className="section-title"><span>变换</span><ChevronDown size={14} /></div>
           <VectorFields title="位置" value={position} onChange={value => isCamera ? onUpdateCamera({ position: value }) : onUpdateObject({ position: value })} disabled={!isCamera && selected.locked} />
-          {!isCamera && <VectorFields title={selected.type === 'person' ? '整体旋转 · X 纵向 / Y 水平 / Z 翻滚' : '旋转'} value={selected.rotation} degrees onChange={rotation => onUpdateObject({ rotation })} disabled={selected.locked} />}
+          {isCamera
+            ? <VectorFields title="摄像机旋转 · X 俯仰 / Y 水平 / Z 翻滚" value={camera.rotation} degrees onChange={rotation => onUpdateCamera({ rotation })} />
+            : <VectorFields title={selected.type === 'person' ? '整体旋转 · X 纵向 / Y 水平 / Z 翻滚' : '旋转'} value={selected.rotation} degrees onChange={rotation => onUpdateObject({ rotation })} disabled={selected.locked} />}
           {!isCamera && <VectorFields title="缩放" value={selected.scale} onChange={scale => onUpdateObject({ scale })} disabled={selected.locked} />}
-          {isCamera && <VectorFields title="观察目标" value={camera.target} onChange={target => onUpdateCamera({ target })} />}
         </div>
         {isCamera ? (
           <div className="inspector-section">
@@ -945,7 +995,7 @@ export default function App() {
   const aimCameraAtSelected = useCallback(() => {
     if (!inspectorSelected || inspectorSelected.id === CAMERA_ID) return
     const target = visualCenterForObject(inspectorSelected)
-    setCamera(current => ({ ...current, target }))
+    setCamera(current => ({ ...current, rotation: cameraRotationToward(current.position, target) }))
     setToast(`摄像机已对准“${inspectorSelected.name}”当前帧位置`)
   }, [inspectorSelected])
 
@@ -1270,7 +1320,7 @@ export default function App() {
   }
   const addKeyframe = () => {
     const existing = keyframes.find(key => key.frame === currentFrame)
-    const next = { frame: currentFrame, interpolation: normalizeInterpolation(existing?.interpolation), position: [...camera.position], target: [...camera.target], focalLength: camera.focalLength }
+    const next = { frame: currentFrame, interpolation: normalizeInterpolation(existing?.interpolation), position: [...camera.position], rotation: [...camera.rotation], focalLength: camera.focalLength }
     setKeyframes(list => [...list.filter(key => key.frame !== currentFrame), next].sort((a, b) => a.frame - b.frame))
     setSelectedKeyframe({ kind: 'camera', frame: currentFrame, trackId: null })
     setToast(`已记录第 ${currentFrame} 帧`)
@@ -1563,7 +1613,7 @@ export default function App() {
           <div className="viewport-mode-help">
             {transformMode === 'select' && 'Q 人物摆姿 · 青色手脚 IK · 金色单骨骼 · Shift 扭转'}
             {transformMode === 'translate' && 'W 整体移动 · 拖动红 / 绿 / 蓝坐标轴'}
-            {transformMode === 'rotate' && 'E 整体旋转 · 左右拖=水平 · 上下拖=纵向 · Shift 拖=翻滚'}
+            {transformMode === 'rotate' && (selectedId === CAMERA_ID ? 'E 摄像机旋转 · 拖动红 / 绿 / 蓝圆环调整俯仰、水平和翻滚' : 'E 整体旋转 · 左右拖=水平 · 上下拖=纵向 · Shift 拖=翻滚')}
             {transformMode === 'scale' && 'R 整体缩放 · 拖动坐标轴或中心块'}
           </div>
           <div className="viewport-view-options floating-panel">

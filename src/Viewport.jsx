@@ -1042,17 +1042,20 @@ function SceneObject({ data, selected, activeJoint, transformMode, onSelect, onU
 
 function CameraModel({ data, selected, transformMode, onSelect, onUpdate }) {
   const groupRef = useRef(null)
-  const syncPosition = useCallback(() => {
-    if (groupRef.current) onUpdate({ position: groupRef.current.position.toArray() })
+  const syncTransform = useCallback(() => {
+    if (!groupRef.current) return
+    onUpdate({
+      position: groupRef.current.position.toArray(),
+      rotation: [groupRef.current.rotation.x, groupRef.current.rotation.y, groupRef.current.rotation.z],
+    })
   }, [onUpdate])
   useLayoutEffect(() => {
-    if (groupRef.current) {
-      groupRef.current.lookAt(...data.target)
-      groupRef.current.rotateY(Math.PI)
-    }
-  }, [data.position, data.target])
+    if (!groupRef.current) return
+    groupRef.current.position.fromArray(data.position)
+    groupRef.current.rotation.set(...data.rotation, 'XYZ')
+  }, [data.position, data.rotation])
   const rig = (
-    <group ref={groupRef} position={data.position} onPointerDown={event => { event.stopPropagation(); onSelect(CAMERA_ID) }}>
+    <group ref={groupRef} position={data.position} rotation={data.rotation} onPointerDown={event => { event.stopPropagation(); onSelect(CAMERA_ID) }}>
       <mesh castShadow>
         <boxGeometry args={[0.52, 0.34, 0.42]} />
         <meshStandardMaterial color={selected ? '#eabf62' : '#3d3c38'} roughness={0.48} metalness={0.35} />
@@ -1082,8 +1085,17 @@ function CameraModel({ data, selected, transformMode, onSelect, onUpdate }) {
   return (
     <>
       {rig}
-      {selected && transformMode === 'translate' && (
-        <TransformControls object={groupRef} mode="translate" size={0.8} translationSnap={0.1} onObjectChange={syncPosition} onMouseUp={syncPosition} />
+      {selected && ['translate', 'rotate'].includes(transformMode) && (
+        <TransformControls
+          object={groupRef}
+          mode={transformMode}
+          space={transformMode === 'rotate' ? 'local' : 'world'}
+          size={0.8}
+          translationSnap={0.1}
+          rotationSnap={Math.PI / 36}
+          onObjectChange={syncTransform}
+          onMouseUp={syncTransform}
+        />
       )}
     </>
   )
@@ -1146,7 +1158,7 @@ function PreviewCameraController({ cameraData }) {
   const { camera, size } = useThree()
   useFrame(() => {
     camera.position.fromArray(cameraData.position)
-    camera.lookAt(...cameraData.target)
+    camera.rotation.set(...cameraData.rotation, 'XYZ')
     const fov = THREE.MathUtils.radToDeg(2 * Math.atan(24 / (2 * cameraData.focalLength)))
     if (Math.abs(camera.fov - fov) > 0.01 || camera.aspect !== size.width / size.height) {
       camera.fov = fov
