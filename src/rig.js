@@ -75,15 +75,18 @@ export const RIG_PRESETS = {
   headShake: { clip: 'headShake', phase: 0.48, duration: 2.566666603088379, loopable: true, label: '摇头动作（头颈）' },
   shake_left: { clip: 'headShake', phase: 0.26, label: '摇头左侧' },
   shake_right: { clip: 'headShake', phase: 0.74, label: '摇头右侧' },
+  sit: { clip: 'sit', phase: 1, label: '自然坐姿（需配椅子）' },
+  wave: { clip: 'wave', phase: 0.48, duration: 1.8333333730697632, loopable: true, label: '招手' },
+  wave_hold: { clip: 'wave', phase: 0.34, label: '招手定格' },
   tpose: { clip: null, phase: 0, label: 'T 型绑定姿态（官方骨架）' },
 }
 
 const LEGACY_PRESET_MAP = {
-  relax: 'idle', sit: 'idle', kneel: 'idle', stretch: 'idle', lie: 'idle', sneak_pose: 'idle',
+  relax: 'idle', sit: 'sit', kneel: 'idle', stretch: 'idle', lie: 'idle', sneak_pose: 'idle',
   fight: 'idle', punch: 'run', kick: 'run', pull: 'idle', push: 'idle', crouch: 'sneak_pose',
   sprint: 'run', jump: 'run', jumpAir: 'run', lunge: 'idle', balance: 'idle', landing: 'idle',
   vault: 'run', handstand: 'tpose', onehand: 'tpose', roll: 'idle', crawl: 'idle',
-  plank: 'tpose', hang: 'tpose', reach: 'idle', wave: 'agree', custom: 'idle',
+  plank: 'tpose', hang: 'tpose', reach: 'idle', wave: 'wave', custom: 'idle',
 }
 
 export function normalizePoseId(pose = 'idle') {
@@ -107,6 +110,7 @@ export const RIG_PRESET_OPTIONS = Object.entries(RIG_PRESETS).map(([id, preset])
 
 export const RIG_PRESET_GROUPS = [
   { label: '基础', poses: [['idle', '自然站立'], ['idle_shift', '重心变化'], ['tpose', 'T 型'], ['sad_pose', '低头含胸']] },
+  { label: '日常动作', poses: [['sit', '坐姿'], ['wave', '招手循环'], ['wave_hold', '招手定格']] },
   { label: '持续动作', poses: [['walk', '行走循环'], ['run', '奔跑循环'], ['agree', '点头循环'], ['headShake', '摇头循环']] },
   { label: '行走定格', poses: [['walk_contact_a', '接触步 A'], ['walk_pass_a', '跨步 A'], ['walk_contact_b', '接触步 B'], ['walk_pass_b', '跨步 B']] },
   { label: '跑步定格', poses: [['run_push_a', '蹬地 A'], ['run_air_a', '腾空 A'], ['run_push_b', '蹬地 B'], ['run_air_b', '腾空 B']] },

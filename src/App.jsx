@@ -75,6 +75,7 @@ const DEFAULT_REFERENCE = {
   x: 0,
   y: 0,
   visible: true,
+  includeInExport: false,
 }
 
 const initialKeyframes = []
@@ -150,6 +151,7 @@ function normalizeReference(reference = {}) {
     x: clamp(Number(reference.x) || 0, -75, 75),
     y: clamp(Number(reference.y) || 0, -75, 75),
     visible: reference.visible !== false,
+    includeInExport: reference.includeInExport === true,
   }
 }
 
@@ -639,7 +641,7 @@ function Inspector({ selected, camera, selectedJoint, customPoses, onSelectJoint
               <input type="checkbox" checked={canLoopPose && Boolean(selected.continuousMotion)} disabled={!canLoopPose} onChange={event => onUpdateObject({ continuousMotion: event.target.checked })} />
               <span><strong>随时间轴循环动作</strong><small>{canLoopPose ? '播放、拖帧和导出时持续循环' : '当前预设是固定姿势，不支持循环'}</small></span>
             </label>
-            <p className="pose-source-note">角色状态关键帧会记录动作、相位、循环开关和完整骨骼，并在对应帧切换。动作来源：Three.js 官方 X-Bot；当前模型没有面部表情。</p>
+            <p className="pose-source-note">角色状态关键帧会记录动作、相位、循环开关和完整骨骼，并在对应帧切换。动作来源：Three.js X-Bot 与 CC0 日常动作；当前模型没有面部表情。</p>
             <div className="pose-library">
               <div className="pose-library-head"><span>动作库</span><small>{RIG_PRESET_OPTIONS.length} PRESETS</small></div>
               {RIG_PRESET_GROUPS.map(group => (
@@ -840,6 +842,33 @@ function referenceImageFromFile(file) {
   })
 }
 
+function referenceCanvasForExport(reference, width, height) {
+  return new Promise((resolve, reject) => {
+    if (!reference?.image || !reference.includeInExport) return resolve(null)
+    const image = new Image()
+    image.onerror = () => reject(new Error('参考图无法加入导出画面'))
+    image.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const context = canvas.getContext('2d')
+      context.fillStyle = '#9b9c98'
+      context.fillRect(0, 0, width, height)
+      context.imageSmoothingEnabled = true
+      context.imageSmoothingQuality = 'high'
+      const drawWidth = width * 0.72 * reference.scale
+      const drawHeight = drawWidth * image.naturalHeight / Math.max(1, image.naturalWidth)
+      const centerX = width * (0.5 + reference.x / 100)
+      const centerY = height * (0.5 + reference.y / 100)
+      context.globalAlpha = reference.opacity
+      context.drawImage(image, centerX - drawWidth / 2, centerY - drawHeight / 2, drawWidth, drawHeight)
+      context.globalAlpha = 1
+      resolve(canvas)
+    }
+    image.src = reference.image
+  })
+}
+
 function ReferenceOverlay({ reference, onChange, onToast }) {
   const inputRef = useRef(null)
   const dragRef = useRef(null)
@@ -898,6 +927,7 @@ function ReferenceOverlay({ reference, onChange, onToast }) {
                 <button type="button" title="移除参考图" aria-label="移除参考图" onClick={() => { onChange(cloneProjectValue(DEFAULT_REFERENCE)); setEditing(false); setExpanded(true) }}><Trash2 size={12} /></button>
                 <label><span>透明</span><input aria-label="参考图透明度" type="range" min="0.1" max="1" step="0.05" value={reference.opacity} onChange={event => update({ opacity: Number(event.target.value) })} /></label>
                 <label><span>大小</span><input aria-label="参考图大小" type="range" min="0.25" max="2" step="0.05" value={reference.scale} onChange={event => update({ scale: Number(event.target.value) })} /></label>
+                <label className="reference-export-toggle"><input aria-label="参考图随 PNG 和 MP4 导出" type="checkbox" checked={reference.includeInExport} onChange={event => update({ includeInExport: event.target.checked })} /><span>进入导出</span></label>
                 <button type="button" onClick={() => update({ x: 0, y: 0, scale: 1 })}>居中</button>
                 <button type="button" title="收起参考图工具" aria-label="收起参考图工具" onClick={() => { setExpanded(false); setEditing(false) }}><ChevronUp size={12} /></button>
               </>
@@ -947,6 +977,7 @@ export default function App() {
   const [playing, setPlaying] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [capturingImage, setCapturingImage] = useState(false)
+  const [exportReferenceBackground, setExportReferenceBackground] = useState(null)
   const [exportProgress, setExportProgress] = useState(0)
   const [showGrid, setShowGrid] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -1572,6 +1603,7 @@ export default function App() {
     imageCaptureCanvasRef.current = null
     try {
       const { width, height } = exportDimensions
+      setExportReferenceBackground(await referenceCanvasForExport(reference, width, height))
       let canvas = null
       for (let attempt = 0; attempt < 90; attempt += 1) {
         await nextPaint()
@@ -1594,6 +1626,7 @@ export default function App() {
       setToast(error?.message || '摄像机截图失败')
     } finally {
       setCapturingImage(false)
+      setExportReferenceBackground(null)
       imageCaptureCanvasRef.current = null
     }
   }
@@ -1617,6 +1650,7 @@ export default function App() {
         QUALITY_HIGH, getFirstEncodableVideoCodec,
       } = await import('mediabunny')
       const { width, height } = exportDimensions
+      setExportReferenceBackground(await referenceCanvasForExport(reference, width, height))
       const codec = await getFirstEncodableVideoCodec(['avc', 'av1', 'vp9'], { width, height, quality: QUALITY_HIGH })
       if (!codec) throw new Error('当前设备没有可用的 MP4 视频编码器')
 
@@ -1671,6 +1705,7 @@ export default function App() {
       setCamera(originalCamera)
       setExporting(false)
       setExportProgress(0)
+      setExportReferenceBackground(null)
       exportCanvasRef.current = null
     }
   }
@@ -1769,8 +1804,10 @@ export default function App() {
             <button><span className="solid-sphere" /> 实体</button>
           </div>
           <div className="viewport-label"><strong>透视视图</strong><span>场景单位 · 世界坐标</span></div>
-          <MainViewport objects={animatedObjects} animationTime={currentFrame / fps} selectedId={selectedId} activeJoint={selectedJoint} onSelect={setSelectedId} onJointSelect={(objectId, jointId) => { setSelectedId(objectId); setSelectedJoint(jointId) }} transformMode={transformMode} onUpdateObject={updateObjectById} cameraData={displayCamera} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} showGrid={showGrid} focusRequest={viewFocusRequest} />
           <ReferenceOverlay reference={reference} onChange={setReference} onToast={setToast} />
+          <div className="viewport-canvas-layer">
+            <MainViewport objects={animatedObjects} animationTime={currentFrame / fps} selectedId={selectedId} activeJoint={selectedJoint} onSelect={setSelectedId} onJointSelect={(objectId, jointId) => { setSelectedId(objectId); setSelectedJoint(jointId) }} transformMode={transformMode} onUpdateObject={updateObjectById} cameraData={displayCamera} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} showGrid={showGrid} focusRequest={viewFocusRequest} referenceVisible={Boolean(reference.image && reference.visible)} />
+          </div>
           <div className="navigation-hint"><span><MousePointer2 size={12} /> 左键选择</span><span>中键旋转视角</span><span>滚轮缩放</span></div>
           <div className="camera-monitor">
             <div className="monitor-head"><div><Video size={13} /><strong>摄像机 01</strong><span>SHOT PREVIEW</span></div><button onClick={() => setSelectedId(CAMERA_ID)}><ZoomIn size={13} /></button></div>
@@ -1811,13 +1848,13 @@ export default function App() {
       </div>
       {capturingImage && (
         <div className="export-render-surface" style={{ width: exportDimensions.width, height: exportDimensions.height }} aria-hidden="true">
-          <CameraPreview objects={animatedObjects} animationTime={currentFrame / fps} cameraData={displayCamera} exportMode onCanvasReady={canvas => { imageCaptureCanvasRef.current = canvas }} />
+          <CameraPreview objects={animatedObjects} animationTime={currentFrame / fps} cameraData={displayCamera} exportMode backgroundCanvas={exportReferenceBackground} onCanvasReady={canvas => { imageCaptureCanvasRef.current = canvas }} />
         </div>
       )}
       {exporting && (
         <>
           <div className="export-render-surface" style={{ width: exportDimensions.width, height: exportDimensions.height }} aria-hidden="true">
-            <CameraPreview objects={animatedObjects} animationTime={currentFrame / fps} cameraData={displayCamera} exportMode onCanvasReady={canvas => { exportCanvasRef.current = canvas }} />
+            <CameraPreview objects={animatedObjects} animationTime={currentFrame / fps} cameraData={displayCamera} exportMode backgroundCanvas={exportReferenceBackground} onCanvasReady={canvas => { exportCanvasRef.current = canvas }} />
           </div>
           <div className="export-progress-overlay" role="status" aria-live="polite">
             <div className="export-progress-card">

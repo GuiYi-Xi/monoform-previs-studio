@@ -1,10 +1,11 @@
 {
   "name": "monoform-previs-studio",
   "private": true,
-  "version": "0.5.1",
+  "version": "0.6.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "build:animations": "node scripts/build-daily-animations.mjs",
     "build": "vite build",
     "preview": "vite preview"
   },

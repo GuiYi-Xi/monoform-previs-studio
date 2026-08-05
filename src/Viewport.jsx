@@ -1111,13 +1111,15 @@ function StudioLights() {
   )
 }
 
-function Ground({ showGrid = true }) {
+function Ground({ showGrid = true, showSurface = true }) {
   return (
     <>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.025, 0]} receiveShadow>
-        <planeGeometry args={[60, 60]} />
-        <meshStandardMaterial color="#4b4b48" roughness={0.96} />
-      </mesh>
+      {showSurface && (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.025, 0]} receiveShadow>
+          <planeGeometry args={[60, 60]} />
+          <meshStandardMaterial color="#4b4b48" roughness={0.96} />
+        </mesh>
+      )}
       {showGrid && <Grid position={[0, 0.002, 0]} args={[30, 30]} cellSize={0.5} cellThickness={0.5} cellColor="#777771" sectionSize={5} sectionThickness={0.8} sectionColor="#9b8c68" fadeDistance={24} fadeStrength={1} infiniteGrid />}
     </>
   )
@@ -1138,13 +1140,13 @@ function ViewFocusController({ request }) {
   return null
 }
 
-function EditorScene({ objects, selectedId, activeJoint, onSelect, onJointSelect, transformMode, onUpdateObject, cameraData, onUpdateCamera, showGrid, focusRequest, animationTime = 0 }) {
+function EditorScene({ objects, selectedId, activeJoint, onSelect, onJointSelect, transformMode, onUpdateObject, cameraData, onUpdateCamera, showGrid, focusRequest, referenceVisible = false, animationTime = 0 }) {
   return (
     <>
-      <color attach="background" args={['#555653']} />
+      {!referenceVisible && <color attach="background" args={['#555653']} />}
       <fog attach="fog" args={['#555653', 18, 42]} />
       <StudioLights />
-      <Ground showGrid={showGrid} />
+      <Ground showGrid={showGrid} showSurface={!referenceVisible} />
       {objects.map(object => <SceneObject key={object.id} data={object} selected={selectedId === object.id} activeJoint={activeJoint} transformMode={transformMode} onSelect={onSelect} onJointSelect={onJointSelect} onUpdate={onUpdateObject} animationTime={animationTime} />)}
       <CameraModel data={cameraData} selected={selectedId === CAMERA_ID} transformMode={transformMode} onSelect={onSelect} onUpdate={onUpdateCamera} />
       <ContactShadows position={[0, 0.01, 0]} opacity={0.42} scale={18} blur={2.4} far={9} />
@@ -1169,13 +1171,25 @@ function PreviewCameraController({ cameraData }) {
   return null
 }
 
-function PreviewScene({ objects, cameraData, animationTime = 0 }) {
+function CanvasBackground({ canvas }) {
+  const texture = useMemo(() => {
+    if (!canvas) return null
+    const next = new THREE.CanvasTexture(canvas)
+    next.colorSpace = THREE.SRGBColorSpace
+    next.needsUpdate = true
+    return next
+  }, [canvas])
+  useEffect(() => () => texture?.dispose(), [texture])
+  return texture ? <primitive attach="background" object={texture} /> : <color attach="background" args={['#9b9c98']} />
+}
+
+function PreviewScene({ objects, cameraData, backgroundCanvas = null, animationTime = 0 }) {
   return (
     <>
-      <color attach="background" args={['#9b9c98']} />
+      <CanvasBackground canvas={backgroundCanvas} />
       <fog attach="fog" args={['#9b9c98', 18, 38]} />
       <StudioLights />
-      <Ground showGrid={false} />
+      <Ground showGrid={false} showSurface={!backgroundCanvas} />
       {objects.map(object => <SceneObject key={object.id} data={object} animationTime={animationTime} preview />)}
       <ContactShadows position={[0, 0.01, 0]} opacity={0.35} scale={18} blur={2.2} far={9} />
       <PreviewCameraController cameraData={cameraData} />
@@ -1185,13 +1199,13 @@ function PreviewScene({ objects, cameraData, animationTime = 0 }) {
 
 export function MainViewport(props) {
   return (
-    <Canvas shadows="basic" dpr={[1, 1.75]} camera={{ position: [8.5, 6.4, 9.5], fov: 42, near: 0.05, far: 200 }} onPointerMissed={() => props.onSelect(null)} gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.88 }}>
+    <Canvas shadows="basic" dpr={[1, 1.75]} camera={{ position: [8.5, 6.4, 9.5], fov: 42, near: 0.05, far: 200 }} onPointerMissed={() => props.onSelect(null)} gl={{ alpha: true, antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.88 }}>
       <EditorScene {...props} />
     </Canvas>
   )
 }
 
-export function CameraPreview({ objects, cameraData, animationTime = 0, onCanvasReady, exportMode = false }) {
+export function CameraPreview({ objects, cameraData, backgroundCanvas = null, animationTime = 0, onCanvasReady, exportMode = false }) {
   return (
     <Canvas
       shadows="basic"
@@ -1200,7 +1214,7 @@ export function CameraPreview({ objects, cameraData, animationTime = 0, onCanvas
       gl={{ antialias: true, preserveDrawingBuffer: exportMode || Boolean(onCanvasReady), toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.9 }}
       onCreated={({ gl }) => onCanvasReady?.(gl.domElement)}
     >
-      <PreviewScene objects={objects} cameraData={cameraData} animationTime={animationTime} />
+      <PreviewScene objects={objects} cameraData={cameraData} backgroundCanvas={backgroundCanvas} animationTime={animationTime} />
     </Canvas>
   )
 }
