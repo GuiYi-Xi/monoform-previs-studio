@@ -56,12 +56,12 @@ export const JOINT_GROUPS = [...new Set(JOINT_DEFINITIONS.map(joint => joint.gro
 // These clips are embedded in the official Three.js X-Bot GLB. No hand-authored
 // Euler poses or skeleton retargeting are involved.
 export const RIG_PRESETS = {
-  idle: { clip: 'idle', phase: 0.08, label: '自然站立' },
-  walk: { clip: 'walk', phase: 0.24, label: '行走' },
-  run: { clip: 'run', phase: 0.24, label: '奔跑' },
+  idle: { clip: 'idle', phase: 0.08, duration: 2.5, loopable: true, label: '自然站立' },
+  walk: { clip: 'walk', phase: 0.24, duration: 0.9666666388511658, loopable: true, label: '行走' },
+  run: { clip: 'run', phase: 0.24, duration: 0.699999988079071, loopable: true, label: '奔跑' },
   sad_pose: { clip: 'sad_pose', phase: 1, label: '低头含胸（仅身体）' },
-  agree: { clip: 'agree', phase: 0.48, label: '点头动作（头颈）' },
-  headShake: { clip: 'headShake', phase: 0.48, label: '摇头动作（头颈）' },
+  agree: { clip: 'agree', phase: 0.48, duration: 1.8333333730697632, loopable: true, label: '点头动作（头颈）' },
+  headShake: { clip: 'headShake', phase: 0.48, duration: 2.566666603088379, loopable: true, label: '摇头动作（头颈）' },
   tpose: { clip: null, phase: 0, label: 'T 型绑定姿态（官方骨架）' },
 }
 
@@ -83,6 +83,11 @@ export function presetDefinition(pose = 'idle') {
 
 export function presetPhase(pose = 'idle') {
   return presetDefinition(pose).phase
+}
+
+export function poseCanLoop(pose = 'idle') {
+  const preset = presetDefinition(pose)
+  return Boolean(preset.loopable && preset.duration > 0)
 }
 
 export const RIG_PRESET_OPTIONS = Object.entries(RIG_PRESETS).map(([id, preset]) => [id, preset.label])

@@ -337,7 +337,7 @@ function MixamoIKHandle({ bone, jointId, selected, modelRoot, onBeginDrag, onDra
   )
 }
 
-function MixamoPersonModel({ bodyType = 'standard', pose = 'idle', poseTime, rigRoot, joints, footLock = false, color = '#e8e3d8', selected = false, selectedJoint, onSelectJoint, onRotateJoint, onRotateJoints, showBoneGizmo = false, onSurfacePointerDown, onSurfacePointerMove, onSurfacePointerUp }) {
+function MixamoPersonModel({ bodyType = 'standard', pose = 'idle', poseTime, continuousMotion = false, animationTime = 0, rigRoot, joints, footLock = false, color = '#e8e3d8', selected = false, selectedJoint, onSelectJoint, onRotateJoint, onRotateJoints, showBoneGizmo = false, onSurfacePointerDown, onSurfacePointerMove, onSurfacePointerUp }) {
   const gltf = useGLTF(BUILT_IN_MODEL_URL)
   const orbitControls = useThree(state => state.controls)
   const camera = useThree(state => state.camera)
@@ -399,7 +399,10 @@ function MixamoPersonModel({ bodyType = 'standard', pose = 'idle', poseTime, rig
       action.reset().setLoop(THREE.LoopOnce, 0)
       action.clampWhenFinished = true
       action.play()
-      const phase = THREE.MathUtils.clamp(Number.isFinite(poseTime) ? poseTime : preset.phase, 0, 1)
+      const basePhase = THREE.MathUtils.clamp(Number.isFinite(poseTime) ? poseTime : preset.phase, 0, 1)
+      const phase = continuousMotion && preset.loopable && preset.duration > 0
+        ? ((basePhase + animationTime / preset.duration) % 1 + 1) % 1
+        : basePhase
       mixer.setTime(clip.duration * phase)
     }
 
@@ -416,7 +419,7 @@ function MixamoPersonModel({ bodyType = 'standard', pose = 'idle', poseTime, rig
     }
     sampledRotations.current = nextSampled
     scene.updateMatrixWorld(true)
-  }, [bindTransforms, bones, clips, mixer, pose, poseTime, rig.joints, scene])
+  }, [animationTime, bindTransforms, bones, clips, continuousMotion, mixer, pose, poseTime, rig.joints, scene])
 
   useLayoutEffect(() => {
     const bodyColor = new THREE.Color(color)
@@ -911,7 +914,7 @@ function DepthMeshModel({ url, settings = {}, color, selected }) {
   )
 }
 
-function SceneObject({ data, selected, activeJoint, transformMode, onSelect, onUpdate, onJointSelect, preview = false }) {
+function SceneObject({ data, selected, activeJoint, transformMode, onSelect, onUpdate, onJointSelect, animationTime = 0, preview = false }) {
   const groupRef = useRef(null)
   const objectRotateDrag = useRef(null)
   const orbitControls = useThree(state => state.controls)
@@ -987,6 +990,8 @@ function SceneObject({ data, selected, activeJoint, transformMode, onSelect, onU
           bodyType={data.bodyType}
           pose={data.pose}
           poseTime={data.poseTime}
+          continuousMotion={data.continuousMotion}
+          animationTime={animationTime}
           rigRoot={data.rigRoot}
           joints={data.joints}
           footLock={data.footLock}
@@ -1018,7 +1023,7 @@ function SceneObject({ data, selected, activeJoint, transformMode, onSelect, onU
   return (
     <>
       {content}
-      {selected && !data.locked && !preview && transformMode !== 'select' && !(data.type === 'person' && transformMode === 'rotate') && (
+      {selected && !data.locked && !preview && transformMode !== 'select' && (
         <TransformControls
           object={groupRef}
           mode={transformMode}
@@ -1120,14 +1125,14 @@ function ViewFocusController({ request }) {
   return null
 }
 
-function EditorScene({ objects, selectedId, activeJoint, onSelect, onJointSelect, transformMode, onUpdateObject, cameraData, onUpdateCamera, showGrid, focusRequest }) {
+function EditorScene({ objects, selectedId, activeJoint, onSelect, onJointSelect, transformMode, onUpdateObject, cameraData, onUpdateCamera, showGrid, focusRequest, animationTime = 0 }) {
   return (
     <>
       <color attach="background" args={['#555653']} />
       <fog attach="fog" args={['#555653', 18, 42]} />
       <StudioLights />
       <Ground showGrid={showGrid} />
-      {objects.map(object => <SceneObject key={object.id} data={object} selected={selectedId === object.id} activeJoint={activeJoint} transformMode={transformMode} onSelect={onSelect} onJointSelect={onJointSelect} onUpdate={onUpdateObject} />)}
+      {objects.map(object => <SceneObject key={object.id} data={object} selected={selectedId === object.id} activeJoint={activeJoint} transformMode={transformMode} onSelect={onSelect} onJointSelect={onJointSelect} onUpdate={onUpdateObject} animationTime={animationTime} />)}
       <CameraModel data={cameraData} selected={selectedId === CAMERA_ID} transformMode={transformMode} onSelect={onSelect} onUpdate={onUpdateCamera} />
       <ContactShadows position={[0, 0.01, 0]} opacity={0.42} scale={18} blur={2.4} far={9} />
       <OrbitControls makeDefault target={[0, 1, 0]} minDistance={2} maxDistance={35} maxPolarAngle={Math.PI * 0.49} />
@@ -1151,14 +1156,14 @@ function PreviewCameraController({ cameraData }) {
   return null
 }
 
-function PreviewScene({ objects, cameraData }) {
+function PreviewScene({ objects, cameraData, animationTime = 0 }) {
   return (
     <>
       <color attach="background" args={['#9b9c98']} />
       <fog attach="fog" args={['#9b9c98', 18, 38]} />
       <StudioLights />
       <Ground showGrid={false} />
-      {objects.map(object => <SceneObject key={object.id} data={object} preview />)}
+      {objects.map(object => <SceneObject key={object.id} data={object} animationTime={animationTime} preview />)}
       <ContactShadows position={[0, 0.01, 0]} opacity={0.35} scale={18} blur={2.2} far={9} />
       <PreviewCameraController cameraData={cameraData} />
     </>
@@ -1173,7 +1178,7 @@ export function MainViewport(props) {
   )
 }
 
-export function CameraPreview({ objects, cameraData, onCanvasReady, exportMode = false }) {
+export function CameraPreview({ objects, cameraData, animationTime = 0, onCanvasReady, exportMode = false }) {
   return (
     <Canvas
       shadows="basic"
@@ -1182,7 +1187,7 @@ export function CameraPreview({ objects, cameraData, onCanvasReady, exportMode =
       gl={{ antialias: true, preserveDrawingBuffer: exportMode, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.9 }}
       onCreated={({ gl }) => onCanvasReady?.(gl.domElement)}
     >
-      <PreviewScene objects={objects} cameraData={cameraData} />
+      <PreviewScene objects={objects} cameraData={cameraData} animationTime={animationTime} />
     </Canvas>
   )
 }

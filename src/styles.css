@@ -165,6 +165,12 @@ button:disabled { opacity: .28; cursor: not-allowed !important; }
 .joint-editor-head small { color: var(--text-faint); font-size: 7px; }
 .pose-source-note, .joint-editor-hint { margin: 8px 0 0; color: var(--text-faint); font-size: 8px; line-height: 1.55; }
 .pose-source-note { padding: 7px 8px; border: 1px solid var(--line-soft); border-radius: 4px; background: rgba(255,255,255,.018); }
+.motion-loop-control { min-height: 38px; display: grid; grid-template-columns: 16px 1fr; align-items: center; gap: 7px; margin: 7px 0 0; padding: 6px 8px; border: 1px solid rgba(214,168,79,.26); border-radius: 4px; background: rgba(214,168,79,.06); cursor: pointer; }
+.motion-loop-control input { width: 13px; height: 13px; margin: 0; accent-color: var(--accent); }
+.motion-loop-control span { display: flex; flex-direction: column; gap: 2px; }
+.motion-loop-control strong { color: #dbc58f; font-size: 8px; font-weight: 600; }
+.motion-loop-control small { color: var(--text-faint); font-size: 7px; line-height: 1.35; }
+.motion-loop-control.is-disabled { opacity: .48; cursor: not-allowed; }
 .joint-reset-button { width: 100%; height: 26px; margin-top: 2px; border: 1px solid rgba(112,182,158,.28); border-radius: 4px; background: #232b28; color: #a9d2c4; font-size: 8px; cursor: pointer; }
 .joint-reset-button:hover { border-color: var(--live); background: #293630; color: #d0eee4; }
 .foot-lock-control { min-height: 38px; display: grid; grid-template-columns: 16px 1fr; align-items: center; gap: 7px; margin-top: 8px; padding: 6px 8px; border: 1px solid rgba(112,182,158,.2); border-radius: 4px; background: rgba(80,150,128,.07); cursor: pointer; }

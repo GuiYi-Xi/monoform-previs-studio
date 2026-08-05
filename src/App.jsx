@@ -7,7 +7,7 @@ import {
   Unlock,
 } from 'lucide-react'
 import { MainViewport, CameraPreview } from './Viewport.jsx'
-import { JOINT_DEFINITIONS, JOINT_GROUPS, RIG_PRESET_GROUPS, RIG_PRESET_OPTIONS, cloneJointPose, interpolateJointPose, normalizePoseId, poseForObject, presetJoints, presetPhase, presetRoot } from './rig.js'
+import { JOINT_DEFINITIONS, JOINT_GROUPS, RIG_PRESET_GROUPS, RIG_PRESET_OPTIONS, cloneJointPose, interpolateJointPose, normalizePoseId, poseCanLoop, poseForObject, presetJoints, presetPhase, presetRoot } from './rig.js'
 
 const FPS = 24
 const TOTAL_FRAMES = 120
@@ -15,7 +15,7 @@ const CAMERA_ID = '__shot_camera__'
 const PROJECT_STORAGE_KEY = 'monoform-project'
 const LEGACY_PROJECT_STORAGE_KEY = 'stageframe-project'
 const CUSTOM_POSE_STORAGE_KEY = 'monoform-custom-poses'
-const PROJECT_VERSION = 8
+const PROJECT_VERSION = 9
 const BRAND_MARK_URL = `${import.meta.env.BASE_URL}branding/monoform-mark.png`
 const ASPECT_RATIOS = [
   { value: '16:9', label: '16 : 9 · 横屏视频', ratio: 16 / 9 },
@@ -40,7 +40,7 @@ function exportDimensionsForAspect(aspectRatio) {
 const initialObjects = [
   {
     id: 'actor-lead', name: '人物 · 主角', type: 'person', bodyType: 'standard', pose: 'walk',
-    poseTime: presetPhase('walk'), position: [-1.25, 0, 0.3], rotation: [0, 0.25, 0], scale: [1, 1, 1], color: '#e8e3d8', joints: presetJoints(),
+    poseTime: presetPhase('walk'), continuousMotion: false, position: [-1.25, 0, 0.3], rotation: [0, 0.25, 0], scale: [1, 1, 1], color: '#e8e3d8', joints: presetJoints(),
   },
   {
     id: 'block-stage', name: '平台', type: 'box',
@@ -82,6 +82,7 @@ function normalizePerson(object) {
     rigRoot: [0, 0, 0],
     joints: cloneJointPose(object.joints),
     footLock: Boolean(object.footLock),
+    continuousMotion: Boolean(object.continuousMotion),
   }
 }
 
@@ -338,6 +339,7 @@ function Inspector({ selected, camera, selectedJoint, customPoses, onSelectJoint
   const position = isCamera ? camera.position : selected.position
   const typeLabel = selected.type === 'depthMesh' ? 'DEPTH SPACE' : selected.type?.toUpperCase()
   const rigPose = selected.type === 'person' ? poseForObject(selected) : null
+  const canLoopPose = selected.type === 'person' && poseCanLoop(selected.pose)
   const jointRotation = rigPose?.joints[selectedJoint] || [0, 0, 0]
   const updateJoint = rotation => onUpdateObject({
     joints: { ...rigPose.joints, [selectedJoint]: rotation },
@@ -381,6 +383,10 @@ function Inspector({ selected, camera, selectedJoint, customPoses, onSelectJoint
             <label className="select-field"><span>体型</span><select value={selected.bodyType} onChange={e => onUpdateObject({ bodyType: e.target.value })}><option value="standard">中性人体</option><option value="female">女性人体</option><option value="male">男性人体</option><option value="tall">修长人体</option><option value="broad">宽体人体</option></select></label>
             <label className="select-field"><span>动作预设</span><select value={normalizePoseId(selected.pose)} onChange={e => applyPreset(e.target.value)}>{RIG_PRESET_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <label className="range-field pose-time-field"><span>动作相位</span><input type="range" min="0" max="1" step="0.01" value={Number.isFinite(selected.poseTime) ? selected.poseTime : presetPhase(selected.pose)} onChange={e => onUpdateObject({ poseTime: Number(e.target.value) })} /><output>{Math.round((Number.isFinite(selected.poseTime) ? selected.poseTime : presetPhase(selected.pose)) * 100)}%</output></label>
+            <label className={`motion-loop-control ${canLoopPose ? '' : 'is-disabled'}`}>
+              <input type="checkbox" checked={canLoopPose && Boolean(selected.continuousMotion)} disabled={!canLoopPose} onChange={event => onUpdateObject({ continuousMotion: event.target.checked })} />
+              <span><strong>随时间轴循环动作</strong><small>{canLoopPose ? '播放、拖帧和导出时持续循环' : '当前预设是固定姿势，不支持循环'}</small></span>
+            </label>
             <p className="pose-source-note">动作来源：Three.js 官方 X-Bot 骨骼动画。当前模型没有面部骨骼或表情，只提供身体、头颈和四肢动作。</p>
             <div className="pose-library">
               <div className="pose-library-head"><span>动作库</span><small>{RIG_PRESET_OPTIONS.length} PRESETS</small></div>
@@ -766,7 +772,7 @@ export default function App() {
 
   const addPerson = bodyType => {
     const id = uid()
-    const person = { id, name: `人物 · ${objects.filter(item => item.type === 'person').length + 1}`, type: 'person', bodyType, pose: 'idle', poseTime: presetPhase('idle'), joints: presetJoints(), rigRoot: [0, 0, 0], footLock: false, position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], color: '#e8e3d8' }
+    const person = { id, name: `人物 · ${objects.filter(item => item.type === 'person').length + 1}`, type: 'person', bodyType, pose: 'idle', poseTime: presetPhase('idle'), joints: presetJoints(), rigRoot: [0, 0, 0], footLock: false, continuousMotion: false, position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], color: '#e8e3d8' }
     setObjects(list => [...list, person])
     setSelectedId(id)
   }
@@ -1153,13 +1159,13 @@ export default function App() {
             <button><span className="solid-sphere" /> 实体</button>
           </div>
           <div className="viewport-label"><strong>透视视图</strong><span>场景单位 · 世界坐标</span></div>
-          <MainViewport objects={animatedObjects} selectedId={selectedId} activeJoint={selectedJoint} onSelect={setSelectedId} onJointSelect={(objectId, jointId) => { setSelectedId(objectId); setSelectedJoint(jointId) }} transformMode={transformMode} onUpdateObject={updateObjectById} cameraData={displayCamera} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} showGrid={showGrid} focusRequest={viewFocusRequest} />
+          <MainViewport objects={animatedObjects} animationTime={currentFrame / FPS} selectedId={selectedId} activeJoint={selectedJoint} onSelect={setSelectedId} onJointSelect={(objectId, jointId) => { setSelectedId(objectId); setSelectedJoint(jointId) }} transformMode={transformMode} onUpdateObject={updateObjectById} cameraData={displayCamera} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} showGrid={showGrid} focusRequest={viewFocusRequest} />
           <div className="navigation-hint"><span><MousePointer2 size={12} /> 左键选择</span><span>中键旋转视角</span><span>滚轮缩放</span></div>
           <div className="camera-monitor">
             <div className="monitor-head"><div><Video size={13} /><strong>摄像机 01</strong><span>SHOT PREVIEW</span></div><button onClick={() => setSelectedId(CAMERA_ID)}><ZoomIn size={13} /></button></div>
             <div className="monitor-frame">
               <div className={`monitor-canvas ${previewAspectClass}`} style={{ '--preview-aspect': previewAspect }}>
-                <CameraPreview objects={animatedObjects} cameraData={displayCamera} />
+                <CameraPreview objects={animatedObjects} animationTime={currentFrame / FPS} cameraData={displayCamera} />
                 <span className="safe-frame" />
                 <span className="owner-watermark" aria-label="MONOFORM 品牌标识"><i><img src={BRAND_MARK_URL} alt="" /></i><b>MONOFORM</b></span>
                 <span className="monitor-timecode">00:00:{String(Math.floor(currentFrame / FPS)).padStart(2, '0')}:{String(currentFrame % FPS).padStart(2, '0')}</span>
@@ -1192,13 +1198,13 @@ export default function App() {
       </div>
       {capturingImage && (
         <div className="export-render-surface" style={{ width: exportDimensions.width, height: exportDimensions.height }} aria-hidden="true">
-          <CameraPreview objects={animatedObjects} cameraData={displayCamera} exportMode onCanvasReady={canvas => { imageCaptureCanvasRef.current = canvas }} />
+          <CameraPreview objects={animatedObjects} animationTime={currentFrame / FPS} cameraData={displayCamera} exportMode onCanvasReady={canvas => { imageCaptureCanvasRef.current = canvas }} />
         </div>
       )}
       {exporting && (
         <>
           <div className="export-render-surface" style={{ width: exportDimensions.width, height: exportDimensions.height }} aria-hidden="true">
-            <CameraPreview objects={animatedObjects} cameraData={displayCamera} exportMode onCanvasReady={canvas => { exportCanvasRef.current = canvas }} />
+            <CameraPreview objects={animatedObjects} animationTime={currentFrame / FPS} cameraData={displayCamera} exportMode onCanvasReady={canvas => { exportCanvasRef.current = canvas }} />
           </div>
           <div className="export-progress-overlay" role="status" aria-live="polite">
             <div className="export-progress-card">
