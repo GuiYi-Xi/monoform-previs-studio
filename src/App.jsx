@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Box, BoxSelect, Camera, ChevronDown, ChevronUp, CircleDot, Copy, Download,
-  FileImage, FileVideo2, Focus, FolderOpen, Grid3X3, Import, Lock, MousePointer2, Move3D, Pause, Play, Plus,
+  FileImage, FileVideo2, Focus, FolderOpen, Grid3X3, Import, Link2, Lock, MousePointer2, Move3D, Pause, Play, Plus,
   Redo2, RotateCw, Save, Settings2, SkipBack, SkipForward, Sparkles,
-  ScanLine, Trash2, Undo2, UserRound, Video, ZoomIn,
+  ScanLine, Trash2, Undo2, Unlink2, UserRound, Video, ZoomIn,
   Unlock,
 } from 'lucide-react'
 import { MainViewport, CameraPreview } from './Viewport.jsx'
@@ -479,21 +479,22 @@ function ToolButton({ icon: Icon, active, label, onClick, disabled = false, shor
   )
 }
 
-function AxisSlider({ label, title, value, onChange, accent, min, max, step, unit = '', disabled = false }) {
+function AxisSlider({ label, title, value, onChange, accent, min, max, step, unit = '', disabled = false, locked = false, onToggleLock }) {
   const numericValue = Number.isFinite(Number(value)) ? Number(value) : 0
   const safeMin = Math.min(min, Math.floor(numericValue / step) * step)
   const safeMax = Math.max(max, Math.ceil(numericValue / step) * step)
   const digits = step < 0.1 ? 2 : step < 1 ? 1 : 0
   return (
-    <label className="axis-slider" style={{ '--axis-color': accent }}>
+    <div className={`axis-slider ${onToggleLock ? 'has-axis-lock' : ''} ${locked ? 'is-axis-locked' : ''}`} style={{ '--axis-color': accent }}>
       <span>{label}</span>
-      <input aria-label={`${title} ${label}`} type="range" min={safeMin} max={safeMax} step={step} value={numericValue} onChange={event => onChange(Number(event.target.value))} disabled={disabled} />
+      <input aria-label={`${title} ${label}`} type="range" min={safeMin} max={safeMax} step={step} value={numericValue} onChange={event => onChange(Number(event.target.value))} disabled={disabled || locked} />
       <output>{numericValue.toFixed(digits)}{unit}</output>
-    </label>
+      {onToggleLock && <button type="button" className="axis-lock-button" aria-label={`${locked ? '解除' : '锁定'}缩放 ${label} 轴`} aria-pressed={locked} title={`${locked ? '解除' : '锁定'} ${label} 轴缩放`} onClick={onToggleLock}>{locked ? <Lock size={10} /> : <Unlock size={10} />}</button>}
+    </div>
   )
 }
 
-function VectorFields({ title, value, onChange, degrees = false, kind = 'position', disabled = false }) {
+function VectorFields({ title, value, onChange, degrees = false, kind = 'position', disabled = false, proportionalScale = false, scaleAxisLocks = [false, false, false], onToggleProportionalScale, onToggleScaleAxis }) {
   const display = degrees ? value.map(radToDeg) : value
   const settings = degrees
     ? { min: -180, max: 180, step: 1, unit: '°' }
@@ -501,17 +502,25 @@ function VectorFields({ title, value, onChange, degrees = false, kind = 'positio
       ? { min: 0.1, max: 5, step: 0.05, unit: '' }
       : { min: -30, max: 30, step: 0.05, unit: '' }
   const update = (index, next) => {
+    if (kind === 'scale' && scaleAxisLocks[index]) return
     const copy = [...display]
-    copy[index] = next
+    if (kind === 'scale' && proportionalScale) {
+      const baseline = Math.max(0.0001, Math.abs(display[index]))
+      const ratio = next / baseline
+      display.forEach((current, axis) => { copy[axis] = scaleAxisLocks[axis] ? current : Math.max(0.05, current * ratio) })
+    } else copy[index] = next
     onChange(degrees ? copy.map(degToRad) : copy)
   }
   return (
     <div className="property-group">
-      <div className="property-label">{title}</div>
+      <div className="property-label-row">
+        <div className="property-label">{title}</div>
+        {kind === 'scale' && <button type="button" className={`proportional-lock ${proportionalScale ? 'is-active' : ''}`} aria-pressed={proportionalScale} onClick={onToggleProportionalScale} disabled={disabled} title="开启后拖动任意未锁定轴，其他未锁定轴按原比例同步缩放">{proportionalScale ? <Link2 size={11} /> : <Unlink2 size={11} />} 等比</button>}
+      </div>
       <div className="axis-sliders">
-        <AxisSlider label="X" title={title} value={display[0]} onChange={value => update(0, value)} accent="#d7675b" disabled={disabled} {...settings} />
-        <AxisSlider label="Y" title={title} value={display[1]} onChange={value => update(1, value)} accent="#76a96c" disabled={disabled} {...settings} />
-        <AxisSlider label="Z" title={title} value={display[2]} onChange={value => update(2, value)} accent="#5d87c7" disabled={disabled} {...settings} />
+        <AxisSlider label="X" title={title} value={display[0]} onChange={value => update(0, value)} accent="#d7675b" disabled={disabled} locked={kind === 'scale' && Boolean(scaleAxisLocks[0])} onToggleLock={kind === 'scale' ? () => onToggleScaleAxis?.(0) : null} {...settings} />
+        <AxisSlider label="Y" title={title} value={display[1]} onChange={value => update(1, value)} accent="#76a96c" disabled={disabled} locked={kind === 'scale' && Boolean(scaleAxisLocks[1])} onToggleLock={kind === 'scale' ? () => onToggleScaleAxis?.(1) : null} {...settings} />
+        <AxisSlider label="Z" title={title} value={display[2]} onChange={value => update(2, value)} accent="#5d87c7" disabled={disabled} locked={kind === 'scale' && Boolean(scaleAxisLocks[2])} onToggleLock={kind === 'scale' ? () => onToggleScaleAxis?.(2) : null} {...settings} />
       </div>
     </div>
   )
@@ -629,7 +638,21 @@ function Inspector({ selected, camera, selectedJoint, customPoses, onSelectJoint
           {isCamera
             ? <VectorFields title="摄像机旋转 · X 俯仰 / Y 水平 / Z 翻滚" value={camera.rotation} degrees onChange={rotation => onUpdateCamera({ rotation })} />
             : <VectorFields title={selected.type === 'person' ? '整体旋转 · X 纵向 / Y 水平 / Z 翻滚' : '旋转'} value={selected.rotation} degrees onChange={rotation => onUpdateObject({ rotation })} disabled={selected.locked} />}
-          {!isCamera && <VectorFields title="缩放" kind="scale" value={selected.scale} onChange={scale => onUpdateObject({ scale })} disabled={selected.locked} />}
+          {!isCamera && <VectorFields
+            title="缩放"
+            kind="scale"
+            value={selected.scale}
+            proportionalScale={Boolean(selected.proportionalScale)}
+            scaleAxisLocks={Array.isArray(selected.scaleAxisLocks) ? selected.scaleAxisLocks : [false, false, false]}
+            onToggleProportionalScale={() => onUpdateObject({ proportionalScale: !selected.proportionalScale })}
+            onToggleScaleAxis={axis => {
+              const locks = Array.isArray(selected.scaleAxisLocks) ? [...selected.scaleAxisLocks] : [false, false, false]
+              locks[axis] = !locks[axis]
+              onUpdateObject({ scaleAxisLocks: locks })
+            }}
+            onChange={scale => onUpdateObject({ scale })}
+            disabled={selected.locked}
+          />}
         </div>
         {isCamera ? (
           <div className="inspector-section">
@@ -879,7 +902,7 @@ function referenceCanvasForExport(reference, width, height) {
   })
 }
 
-function ReferenceOverlay({ reference, onChange, onToast, cameraMode = false, cameraAspect = 16 / 9, onImageLoaded, children }) {
+function ReferenceOverlay({ reference, onChange, onToast, cameraMode = false, cameraAspect = 16 / 9, children }) {
   const inputRef = useRef(null)
   const dragRef = useRef(null)
   const [editing, setEditing] = useState(false)
@@ -894,8 +917,7 @@ function ReferenceOverlay({ reference, onChange, onToast, cameraMode = false, ca
       onChange(normalizeReference({ ...DEFAULT_REFERENCE, image, name: file.name }))
       setEditing(false)
       setExpanded(true)
-      onImageLoaded?.()
-      onToast(`参考图“${file.name}”已加入工作区`)
+      onToast(`参考图“${file.name}”已加入 · 精确对应导出时请切换“镜头对齐”`)
     } catch (error) {
       onToast(error.message || '参考图上传失败')
     }
@@ -999,7 +1021,7 @@ export default function App() {
   const [exportReferenceBackground, setExportReferenceBackground] = useState(null)
   const [exportProgress, setExportProgress] = useState(0)
   const [showGrid, setShowGrid] = useState(true)
-  const [cameraView, setCameraView] = useState(() => Boolean(startupProject?.reference?.image))
+  const [cameraView, setCameraView] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [viewFocusRequest, setViewFocusRequest] = useState(null)
   const [toast, setToast] = useState('')
@@ -1828,16 +1850,17 @@ export default function App() {
           </div>
           <div className="viewport-view-options floating-panel">
             <button className={showGrid ? 'is-active' : ''} onClick={() => setShowGrid(value => !value)}><Grid3X3 size={14} /> 网格</button>
-            <button className={cameraView ? 'is-active' : ''} onClick={() => setCameraView(value => !value)} title="使用最终摄像机画幅摆放参考图和模型"><ScanLine size={14} /> 镜头对齐</button>
+            <button className={!cameraView ? 'is-active' : ''} onClick={() => setCameraView(false)} title="自由旋转和缩放观察场景"><RotateCw size={14} /> 自由视图</button>
+            <button className={cameraView ? 'is-active' : ''} onClick={() => setCameraView(true)} title="使用最终摄像机画幅摆放参考图和模型"><ScanLine size={14} /> 镜头对齐</button>
             <button><span className="solid-sphere" /> 实体</button>
           </div>
-          <div className="viewport-label"><strong>{cameraView ? '镜头对齐视图' : '透视视图'}</strong><span>{cameraView ? `${displayCamera.aspectRatio || '16:9'} · 与 PNG / MP4 构图一致` : '场景单位 · 世界坐标'}</span></div>
-          <ReferenceOverlay reference={reference} onChange={setReference} onToast={setToast} cameraMode={cameraView} cameraAspect={previewAspect} onImageLoaded={() => setCameraView(true)}>
+          <div className="viewport-label"><strong>{cameraView ? '镜头对齐视图' : '自由视图'}</strong><span>{cameraView ? `${displayCamera.aspectRatio || '16:9'} · 与 PNG / MP4 构图一致` : '空白处左键拖动可自由旋转'}</span></div>
+          <ReferenceOverlay reference={reference} onChange={setReference} onToast={setToast} cameraMode={cameraView} cameraAspect={previewAspect}>
             <div className="viewport-canvas-layer">
               <MainViewport cameraView={cameraView} objects={animatedObjects} animationTime={currentFrame / fps} selectedId={selectedId} activeJoint={selectedJoint} onSelect={setSelectedId} onJointSelect={(objectId, jointId) => { setSelectedId(objectId); setSelectedJoint(jointId) }} transformMode={transformMode} onUpdateObject={updateObjectById} cameraData={displayCamera} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} showGrid={showGrid} focusRequest={viewFocusRequest} referenceVisible={Boolean(reference.image && reference.visible)} />
             </div>
           </ReferenceOverlay>
-          <div className="navigation-hint"><span><MousePointer2 size={12} /> 左键选择</span>{cameraView ? <span>镜头画面与导出一致</span> : <><span>中键旋转视角</span><span>滚轮缩放</span></>}</div>
+          <div className="navigation-hint"><span><MousePointer2 size={12} /> 点击物体选择</span>{cameraView ? <span>镜头画面与导出一致</span> : <><span>空白处左键旋转</span><span>右键平移</span><span>滚轮缩放</span></>}</div>
           <div className="camera-monitor">
             <div className="monitor-head"><div><Video size={13} /><strong>摄像机 01</strong><span>SHOT PREVIEW</span></div><button onClick={() => setSelectedId(CAMERA_ID)}><ZoomIn size={13} /></button></div>
             <div className="monitor-frame">

@@ -152,11 +152,20 @@ button:disabled { opacity: .28; cursor: not-allowed !important; }
 .property-group { margin-bottom: 12px; }
 .property-group:last-child { margin-bottom: 0; }
 .property-label { color: var(--text-faint); font-size: 9px; margin-bottom: 5px; }
+.property-label-row { min-height: 20px; margin-bottom: 4px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.property-label-row .property-label { margin-bottom: 0; }
+.proportional-lock { height: 20px; padding: 0 6px; display: flex; align-items: center; gap: 4px; border: 1px solid #3c3c38; border-radius: 4px; background: #242422; color: var(--text-faint); font-size: 7px; cursor: pointer; }
+.proportional-lock:hover { border-color: #68604e; color: var(--text); }
+.proportional-lock.is-active { border-color: rgba(214,168,79,.58); background: #362f21; color: var(--accent); }
 .axis-sliders { display: grid; gap: 5px; }
 .axis-slider { min-height: 23px; display: grid; grid-template-columns: 14px minmax(0, 1fr) 43px; align-items: center; gap: 5px; }
+.axis-slider.has-axis-lock { grid-template-columns: 14px minmax(0, 1fr) 43px 22px; }
 .axis-slider span { color: var(--axis-color); font-family: "Cascadia Mono", monospace; font-size: 8px; font-weight: 700; }
 .axis-slider input { min-width: 0; width: 100%; height: 14px; margin: 0; accent-color: var(--axis-color); cursor: ew-resize; }
 .axis-slider output { min-width: 0; color: var(--text-dim); font-family: "Cascadia Mono", monospace; font-size: 8px; text-align: right; }
+.axis-lock-button { width: 22px; height: 20px; padding: 0; display: grid; place-items: center; border: 1px solid #3b3b37; border-radius: 4px; background: #252523; color: var(--text-faint); cursor: pointer; }
+.axis-lock-button:hover { border-color: #68604e; color: var(--text); }
+.axis-slider.is-axis-locked .axis-lock-button { border-color: rgba(214,168,79,.5); background: #362f21; color: var(--accent); }
 .axis-slider input:disabled { opacity: .38; cursor: not-allowed; }
 .axis-slider:has(input:disabled) output { color: var(--text-faint); opacity: .55; }
 .range-field { display: grid; grid-template-columns: 39px 1fr 47px; align-items: center; gap: 6px; font-size: 9px; color: var(--text-faint); }

@@ -930,17 +930,32 @@ function shouldKeepCurrentSelection(event, selectedId, selected, transformMode) 
 function SceneObject({ data, selected, selectedId, activeJoint, transformMode, onSelect, onUpdate, onJointSelect, animationTime = 0, preview = false }) {
   const groupRef = useRef(null)
   const objectRotateDrag = useRef(null)
+  const scaleTransformStart = useRef(null)
   const orbitControls = useThree(state => state.controls)
+  const scaleAxisLocks = Array.isArray(data.scaleAxisLocks) ? data.scaleAxisLocks : [false, false, false]
   const stateAnimationTime = Math.max(0, animationTime - (Number.isFinite(data.motionStartTime) ? data.motionStartTime : 0))
   const syncTransform = useCallback(() => {
     const object = groupRef.current
     if (!object) return
+    let nextScale = object.scale.toArray()
+    if (transformMode === 'scale' && scaleTransformStart.current) {
+      const baseline = scaleTransformStart.current
+      const locks = Array.isArray(data.scaleAxisLocks) ? data.scaleAxisLocks : [false, false, false]
+      if (data.proportionalScale) {
+        const changedAxis = nextScale
+          .map((value, axis) => ({ axis, change: locks[axis] ? -1 : Math.abs(value / Math.max(0.0001, baseline[axis]) - 1) }))
+          .sort((left, right) => right.change - left.change)[0]
+        const factor = changedAxis?.change > 0.00001 ? nextScale[changedAxis.axis] / Math.max(0.0001, baseline[changedAxis.axis]) : 1
+        nextScale = baseline.map((value, axis) => locks[axis] ? value : Math.max(0.05, value * factor))
+      } else nextScale = nextScale.map((value, axis) => locks[axis] ? baseline[axis] : Math.max(0.05, value))
+      object.scale.fromArray(nextScale)
+    }
     onUpdate(data.id, {
       position: object.position.toArray(),
       rotation: [object.rotation.x, object.rotation.y, object.rotation.z],
-      scale: object.scale.toArray(),
+      scale: nextScale,
     })
-  }, [data.id, onUpdate])
+  }, [data.id, data.proportionalScale, data.scaleAxisLocks, onUpdate, transformMode])
   const beginObjectInteraction = useCallback(event => {
     if (shouldKeepCurrentSelection(event, selectedId, selected, transformMode)) return
     event.stopPropagation()
@@ -1045,10 +1060,14 @@ function SceneObject({ data, selected, selectedId, activeJoint, transformMode, o
           mode={transformMode}
           space="world"
           size={0.8}
+          showX={transformMode !== 'scale' || !scaleAxisLocks[0]}
+          showY={transformMode !== 'scale' || !scaleAxisLocks[1]}
+          showZ={transformMode !== 'scale' || !scaleAxisLocks[2]}
           translationSnap={0.1}
           rotationSnap={Math.PI / 36}
+          onMouseDown={() => { if (transformMode === 'scale' && groupRef.current) scaleTransformStart.current = groupRef.current.scale.toArray() }}
           onObjectChange={syncTransform}
-          onMouseUp={syncTransform}
+          onMouseUp={() => { syncTransform(); scaleTransformStart.current = null }}
         />
       )}
     </>
