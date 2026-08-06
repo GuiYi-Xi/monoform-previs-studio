@@ -479,17 +479,27 @@ function ToolButton({ icon: Icon, active, label, onClick, disabled = false, shor
   )
 }
 
-function NumberField({ label, value, onChange, accent, disabled = false }) {
+function AxisSlider({ label, title, value, onChange, accent, min, max, step, unit = '', disabled = false }) {
+  const numericValue = Number.isFinite(Number(value)) ? Number(value) : 0
+  const safeMin = Math.min(min, Math.floor(numericValue / step) * step)
+  const safeMax = Math.max(max, Math.ceil(numericValue / step) * step)
+  const digits = step < 0.1 ? 2 : step < 1 ? 1 : 0
   return (
-    <label className="number-field">
-      <span style={{ color: accent }}>{label}</span>
-      <input type="number" step="0.1" value={Number(value.toFixed?.(2) ?? value)} onChange={event => onChange(Number(event.target.value))} disabled={disabled} />
+    <label className="axis-slider" style={{ '--axis-color': accent }}>
+      <span>{label}</span>
+      <input aria-label={`${title} ${label}`} type="range" min={safeMin} max={safeMax} step={step} value={numericValue} onChange={event => onChange(Number(event.target.value))} disabled={disabled} />
+      <output>{numericValue.toFixed(digits)}{unit}</output>
     </label>
   )
 }
 
-function VectorFields({ title, value, onChange, degrees = false, disabled = false }) {
+function VectorFields({ title, value, onChange, degrees = false, kind = 'position', disabled = false }) {
   const display = degrees ? value.map(radToDeg) : value
+  const settings = degrees
+    ? { min: -180, max: 180, step: 1, unit: '°' }
+    : kind === 'scale'
+      ? { min: 0.1, max: 5, step: 0.05, unit: '' }
+      : { min: -30, max: 30, step: 0.05, unit: '' }
   const update = (index, next) => {
     const copy = [...display]
     copy[index] = next
@@ -498,10 +508,10 @@ function VectorFields({ title, value, onChange, degrees = false, disabled = fals
   return (
     <div className="property-group">
       <div className="property-label">{title}</div>
-      <div className="vector-row">
-        <NumberField label="X" value={display[0]} onChange={value => update(0, value)} accent="#d7675b" disabled={disabled} />
-        <NumberField label="Y" value={display[1]} onChange={value => update(1, value)} accent="#76a96c" disabled={disabled} />
-        <NumberField label="Z" value={display[2]} onChange={value => update(2, value)} accent="#5d87c7" disabled={disabled} />
+      <div className="axis-sliders">
+        <AxisSlider label="X" title={title} value={display[0]} onChange={value => update(0, value)} accent="#d7675b" disabled={disabled} {...settings} />
+        <AxisSlider label="Y" title={title} value={display[1]} onChange={value => update(1, value)} accent="#76a96c" disabled={disabled} {...settings} />
+        <AxisSlider label="Z" title={title} value={display[2]} onChange={value => update(2, value)} accent="#5d87c7" disabled={disabled} {...settings} />
       </div>
     </div>
   )
@@ -619,7 +629,7 @@ function Inspector({ selected, camera, selectedJoint, customPoses, onSelectJoint
           {isCamera
             ? <VectorFields title="摄像机旋转 · X 俯仰 / Y 水平 / Z 翻滚" value={camera.rotation} degrees onChange={rotation => onUpdateCamera({ rotation })} />
             : <VectorFields title={selected.type === 'person' ? '整体旋转 · X 纵向 / Y 水平 / Z 翻滚' : '旋转'} value={selected.rotation} degrees onChange={rotation => onUpdateObject({ rotation })} disabled={selected.locked} />}
-          {!isCamera && <VectorFields title="缩放" value={selected.scale} onChange={scale => onUpdateObject({ scale })} disabled={selected.locked} />}
+          {!isCamera && <VectorFields title="缩放" kind="scale" value={selected.scale} onChange={scale => onUpdateObject({ scale })} disabled={selected.locked} />}
         </div>
         {isCamera ? (
           <div className="inspector-section">
@@ -664,7 +674,7 @@ function Inspector({ selected, camera, selectedJoint, customPoses, onSelectJoint
               <VectorFields title="关节旋转" value={jointRotation} degrees onChange={updateJoint} />
               <button type="button" className="joint-reset-button" onClick={() => updateJoint([0, 0, 0])}>重置当前关节</button>
               <button type="button" className="joint-reset-button" onClick={() => onUpdateObject({ joints: presetJoints() })}>重置全部骨骼</button>
-              <p className="joint-editor-hint">按 Q 后拖动青绿色的手脚控制点可摆放四肢末端；拖动人物其他部位或金色骨骼点可旋转单根骨骼。按住 Shift 左右拖可调整单骨骼扭转，也可使用 X/Y/Z 数值精确调整。</p>
+              <p className="joint-editor-hint">按 Q 后拖动青绿色的手脚控制点可摆放四肢末端；拖动人物其他部位或金色骨骼点可旋转单根骨骼。按住 Shift 左右拖可调整单骨骼扭转，也可使用 X/Y/Z 滑块微调。</p>
               <label className="foot-lock-control">
                 <input type="checkbox" checked={Boolean(selected.footLock)} onChange={event => onUpdateObject({ footLock: event.target.checked })} />
                 <span><strong>脚底锁定</strong><small>脚部 IK 保持当前脚底高度，只沿地面拖动</small></span>
@@ -991,6 +1001,7 @@ export default function App() {
   const exportCanvasRef = useRef(null)
   const imageCaptureCanvasRef = useRef(null)
   const monitorCanvasRef = useRef(null)
+  const exportLockRef = useRef(false)
   const historyRef = useRef({ past: [], future: [], last: '', timer: null, restoring: false })
   const latestProjectRef = useRef(null)
 
@@ -1597,13 +1608,15 @@ export default function App() {
     else setToast(cached ? '工程已保存到浏览器' : '浏览器保存空间不足，请使用“导出工程”备份')
   }
   const handleCaptureImage = async () => {
-    if (exporting || capturingImage) return
+    if (exportLockRef.current || exporting || capturingImage) return
+    exportLockRef.current = true
     setPlaying(false)
-    setCapturingImage(true)
     imageCaptureCanvasRef.current = null
     try {
       const { width, height } = exportDimensions
-      setExportReferenceBackground(await referenceCanvasForExport(reference, width, height))
+      const backgroundCanvas = await referenceCanvasForExport(reference, width, height)
+      setExportReferenceBackground(backgroundCanvas)
+      setCapturingImage(true)
       let canvas = null
       for (let attempt = 0; attempt < 90; attempt += 1) {
         await nextPaint()
@@ -1628,10 +1641,12 @@ export default function App() {
       setCapturingImage(false)
       setExportReferenceBackground(null)
       imageCaptureCanvasRef.current = null
+      exportLockRef.current = false
     }
   }
   const handleExportMp4 = async () => {
-    if (exporting || capturingImage) return
+    if (exportLockRef.current || exporting || capturingImage) return
+    exportLockRef.current = true
     const originalFrame = currentFrameRef.current
     const originalCamera = keyframes.length ? cameraAtFrame(keyframes, originalFrame, camera.aspectRatio) : camera
     let output
@@ -1639,7 +1654,6 @@ export default function App() {
     setPlaying(false)
     setObjectDrafts({})
     setCamera(originalCamera)
-    setExporting(true)
     setExportProgress(0)
     exportCanvasRef.current = null
 
@@ -1650,7 +1664,9 @@ export default function App() {
         QUALITY_HIGH, getFirstEncodableVideoCodec,
       } = await import('mediabunny')
       const { width, height } = exportDimensions
-      setExportReferenceBackground(await referenceCanvasForExport(reference, width, height))
+      const backgroundCanvas = await referenceCanvasForExport(reference, width, height)
+      setExportReferenceBackground(backgroundCanvas)
+      setExporting(true)
       const codec = await getFirstEncodableVideoCodec(['avc', 'av1', 'vp9'], { width, height, quality: QUALITY_HIGH })
       if (!codec) throw new Error('当前设备没有可用的 MP4 视频编码器')
 
@@ -1707,6 +1723,7 @@ export default function App() {
       setExportProgress(0)
       setExportReferenceBackground(null)
       exportCanvasRef.current = null
+      exportLockRef.current = false
     }
   }
   const loadProject = event => {
@@ -1794,10 +1811,10 @@ export default function App() {
             <ToolButton icon={BoxSelect} label="缩放" active={transformMode === 'scale'} onClick={() => setTransformMode('scale')} shortcut="R" />
           </div>
           <div className="viewport-mode-help">
-            {transformMode === 'select' && 'Q 人物摆姿 · 青色手脚 IK · 金色单骨骼 · Shift 扭转'}
-            {transformMode === 'translate' && 'W 整体移动 · 拖动红 / 绿 / 蓝坐标轴'}
-            {transformMode === 'rotate' && (selectedId === CAMERA_ID ? 'E 摄像机旋转 · 拖动红 / 绿 / 蓝圆环调整俯仰、水平和翻滚' : 'E 整体旋转 · 左右拖=水平 · 上下拖=纵向 · Shift 拖=翻滚')}
-            {transformMode === 'scale' && 'R 整体缩放 · 拖动坐标轴或中心块'}
+            {transformMode === 'select' && 'Q 选择 / 人物摆姿 · 重叠处优先当前对象 · Alt 选择前层'}
+            {transformMode === 'translate' && 'W 整体移动 · 当前选择已锁定 · 拖动红 / 绿 / 蓝坐标轴'}
+            {transformMode === 'rotate' && (selectedId === CAMERA_ID ? 'E 摄像机旋转 · 当前选择已锁定 · 拖动红 / 绿 / 蓝圆环' : 'E 整体旋转 · 当前选择已锁定 · 左右水平 / 上下纵向 / Shift 翻滚')}
+            {transformMode === 'scale' && 'R 整体缩放 · 当前选择已锁定 · 拖动坐标轴或中心块'}
           </div>
           <div className="viewport-view-options floating-panel">
             <button className={showGrid ? 'is-active' : ''} onClick={() => setShowGrid(value => !value)}><Grid3X3 size={14} /> 网格</button>

@@ -152,12 +152,13 @@ button:disabled { opacity: .28; cursor: not-allowed !important; }
 .property-group { margin-bottom: 12px; }
 .property-group:last-child { margin-bottom: 0; }
 .property-label { color: var(--text-faint); font-size: 9px; margin-bottom: 5px; }
-.vector-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
-.number-field { height: 27px; display: grid; grid-template-columns: 14px 1fr; align-items: center; padding-left: 5px; border: 1px solid #3b3b37; border-radius: 4px; background: #1d1d1c; }
-.number-field span { font-family: "Cascadia Mono", monospace; font-size: 8px; font-weight: 700; }
-.number-field input { min-width: 0; width: 100%; height: 100%; border: 0; background: transparent; color: var(--text-dim); font-family: "Cascadia Mono", monospace; font-size: 9px; outline: 0; padding: 0 3px; }
-.number-field input:disabled { color: var(--text-faint); opacity: .5; cursor: not-allowed; }
-.number-field input::-webkit-inner-spin-button { display: none; }
+.axis-sliders { display: grid; gap: 5px; }
+.axis-slider { min-height: 23px; display: grid; grid-template-columns: 14px minmax(0, 1fr) 43px; align-items: center; gap: 5px; }
+.axis-slider span { color: var(--axis-color); font-family: "Cascadia Mono", monospace; font-size: 8px; font-weight: 700; }
+.axis-slider input { min-width: 0; width: 100%; height: 14px; margin: 0; accent-color: var(--axis-color); cursor: ew-resize; }
+.axis-slider output { min-width: 0; color: var(--text-dim); font-family: "Cascadia Mono", monospace; font-size: 8px; text-align: right; }
+.axis-slider input:disabled { opacity: .38; cursor: not-allowed; }
+.axis-slider:has(input:disabled) output { color: var(--text-faint); opacity: .55; }
 .range-field { display: grid; grid-template-columns: 39px 1fr 47px; align-items: center; gap: 6px; font-size: 9px; color: var(--text-faint); }
 .range-field input { accent-color: var(--accent); min-width: 0; height: 3px; }
 .range-field output { text-align: right; color: var(--text-dim); font-family: "Cascadia Mono", monospace; }

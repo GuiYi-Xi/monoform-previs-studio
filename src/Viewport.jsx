@@ -914,7 +914,20 @@ function DepthMeshModel({ url, settings = {}, color, selected }) {
   )
 }
 
-function SceneObject({ data, selected, activeJoint, transformMode, onSelect, onUpdate, onJointSelect, animationTime = 0, preview = false }) {
+function sceneObjectIdFromIntersection(intersection) {
+  let object = intersection?.object
+  while (object && !object.userData?.sceneObjectId) object = object.parent
+  return object?.userData?.sceneObjectId || null
+}
+
+function shouldKeepCurrentSelection(event, selectedId, selected, transformMode) {
+  if (selected || !selectedId) return false
+  if (transformMode !== 'select') return true
+  if (event.altKey || event.nativeEvent?.altKey) return false
+  return event.intersections?.some(intersection => sceneObjectIdFromIntersection(intersection) === selectedId)
+}
+
+function SceneObject({ data, selected, selectedId, activeJoint, transformMode, onSelect, onUpdate, onJointSelect, animationTime = 0, preview = false }) {
   const groupRef = useRef(null)
   const objectRotateDrag = useRef(null)
   const orbitControls = useThree(state => state.controls)
@@ -929,6 +942,7 @@ function SceneObject({ data, selected, activeJoint, transformMode, onSelect, onU
     })
   }, [data.id, onUpdate])
   const beginObjectInteraction = useCallback(event => {
+    if (shouldKeepCurrentSelection(event, selectedId, selected, transformMode)) return
     event.stopPropagation()
     onSelect(data.id)
     if (data.locked) return
@@ -943,7 +957,7 @@ function SceneObject({ data, selected, activeJoint, transformMode, onSelect, onU
     }
     if (orbitControls) orbitControls.enabled = false
     document.body.style.cursor = 'grabbing'
-  }, [data.id, data.locked, onSelect, orbitControls, selected, transformMode])
+  }, [data.id, data.locked, onSelect, orbitControls, selected, selectedId, transformMode])
   const rotateObjectFromSurface = useCallback(event => {
     const drag = objectRotateDrag.current
     const object = groupRef.current
@@ -981,6 +995,7 @@ function SceneObject({ data, selected, activeJoint, transformMode, onSelect, onU
       rotation={data.rotation}
       scale={data.scale}
       visible={data.visible !== false}
+      userData={{ sceneObjectId: data.id }}
       onPointerDown={preview ? undefined : beginObjectInteraction}
       onPointerMove={preview ? undefined : rotateObjectFromSurface}
       onPointerUp={preview ? undefined : endObjectInteraction}
@@ -1040,7 +1055,7 @@ function SceneObject({ data, selected, activeJoint, transformMode, onSelect, onU
   )
 }
 
-function CameraModel({ data, selected, transformMode, onSelect, onUpdate }) {
+function CameraModel({ data, selected, selectedId, transformMode, onSelect, onUpdate }) {
   const groupRef = useRef(null)
   const syncTransform = useCallback(() => {
     if (!groupRef.current) return
@@ -1054,8 +1069,13 @@ function CameraModel({ data, selected, transformMode, onSelect, onUpdate }) {
     groupRef.current.position.fromArray(data.position)
     groupRef.current.rotation.set(...data.rotation, 'XYZ')
   }, [data.position, data.rotation])
+  const selectCamera = event => {
+    if (shouldKeepCurrentSelection(event, selectedId, selected, transformMode)) return
+    event.stopPropagation()
+    onSelect(CAMERA_ID)
+  }
   const rig = (
-    <group ref={groupRef} position={data.position} rotation={data.rotation} onPointerDown={event => { event.stopPropagation(); onSelect(CAMERA_ID) }}>
+    <group ref={groupRef} position={data.position} rotation={data.rotation} userData={{ sceneObjectId: CAMERA_ID }} onPointerDown={selectCamera}>
       <mesh castShadow>
         <boxGeometry args={[0.52, 0.34, 0.42]} />
         <meshStandardMaterial color={selected ? '#eabf62' : '#3d3c38'} roughness={0.48} metalness={0.35} />
@@ -1147,8 +1167,8 @@ function EditorScene({ objects, selectedId, activeJoint, onSelect, onJointSelect
       <fog attach="fog" args={['#555653', 18, 42]} />
       <StudioLights />
       <Ground showGrid={showGrid} showSurface={!referenceVisible} />
-      {objects.map(object => <SceneObject key={object.id} data={object} selected={selectedId === object.id} activeJoint={activeJoint} transformMode={transformMode} onSelect={onSelect} onJointSelect={onJointSelect} onUpdate={onUpdateObject} animationTime={animationTime} />)}
-      <CameraModel data={cameraData} selected={selectedId === CAMERA_ID} transformMode={transformMode} onSelect={onSelect} onUpdate={onUpdateCamera} />
+      {objects.map(object => <SceneObject key={object.id} data={object} selected={selectedId === object.id} selectedId={selectedId} activeJoint={activeJoint} transformMode={transformMode} onSelect={onSelect} onJointSelect={onJointSelect} onUpdate={onUpdateObject} animationTime={animationTime} />)}
+      <CameraModel data={cameraData} selected={selectedId === CAMERA_ID} selectedId={selectedId} transformMode={transformMode} onSelect={onSelect} onUpdate={onUpdateCamera} />
       <ContactShadows position={[0, 0.01, 0]} opacity={0.42} scale={18} blur={2.4} far={9} />
       <OrbitControls makeDefault target={[0, 1, 0]} minDistance={2} maxDistance={35} maxPolarAngle={Math.PI * 0.49} />
       <ViewFocusController request={focusRequest} />
