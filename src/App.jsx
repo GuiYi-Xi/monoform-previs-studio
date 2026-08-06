@@ -879,7 +879,7 @@ function referenceCanvasForExport(reference, width, height) {
   })
 }
 
-function ReferenceOverlay({ reference, onChange, onToast }) {
+function ReferenceOverlay({ reference, onChange, onToast, cameraMode = false, cameraAspect = 16 / 9, onImageLoaded, children }) {
   const inputRef = useRef(null)
   const dragRef = useRef(null)
   const [editing, setEditing] = useState(false)
@@ -894,6 +894,7 @@ function ReferenceOverlay({ reference, onChange, onToast }) {
       onChange(normalizeReference({ ...DEFAULT_REFERENCE, image, name: file.name }))
       setEditing(false)
       setExpanded(true)
+      onImageLoaded?.()
       onToast(`参考图“${file.name}”已加入工作区`)
     } catch (error) {
       onToast(error.message || '参考图上传失败')
@@ -921,6 +922,20 @@ function ReferenceOverlay({ reference, onChange, onToast }) {
     event.currentTarget.releasePointerCapture?.(event.pointerId)
   }
   const hasImage = Boolean(reference.image)
+  const referenceLayer = hasImage && reference.visible ? (
+    <div className={`reference-layer ${editing ? 'is-editing' : ''}`} aria-label={`参考图 ${reference.name}`}>
+      <img
+        src={reference.image}
+        alt={reference.name || '动作参考图'}
+        draggable="false"
+        style={{ left: `${50 + reference.x}%`, top: `${50 + reference.y}%`, width: `${72 * reference.scale}%`, opacity: reference.opacity }}
+        onPointerDown={beginDrag}
+        onPointerMove={moveDrag}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+      />
+    </div>
+  ) : null
   return (
     <>
       <div className={`reference-panel floating-panel ${hasImage ? 'has-image' : ''} ${hasImage && !expanded ? 'is-collapsed' : ''}`}>
@@ -945,20 +960,14 @@ function ReferenceOverlay({ reference, onChange, onToast }) {
           </>
         )}
       </div>
-      {hasImage && reference.visible && (
-        <div className={`reference-layer ${editing ? 'is-editing' : ''}`} aria-label={`参考图 ${reference.name}`}>
-          <img
-            src={reference.image}
-            alt={reference.name || '动作参考图'}
-            draggable="false"
-            style={{ left: `${50 + reference.x}%`, top: `${50 + reference.y}%`, width: `${72 * reference.scale}%`, opacity: reference.opacity }}
-            onPointerDown={beginDrag}
-            onPointerMove={moveDrag}
-            onPointerUp={endDrag}
-            onPointerCancel={endDrag}
-          />
+      {cameraMode ? (
+        <div className="camera-edit-frame">
+          <div className="camera-edit-stage" style={{ aspectRatio: cameraAspect, '--camera-aspect': cameraAspect }}>
+            {referenceLayer}
+            {children}
+          </div>
         </div>
-      )}
+      ) : <>{referenceLayer}{children}</>}
     </>
   )
 }
@@ -990,6 +999,7 @@ export default function App() {
   const [exportReferenceBackground, setExportReferenceBackground] = useState(null)
   const [exportProgress, setExportProgress] = useState(0)
   const [showGrid, setShowGrid] = useState(true)
+  const [cameraView, setCameraView] = useState(() => Boolean(startupProject?.reference?.image))
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [viewFocusRequest, setViewFocusRequest] = useState(null)
   const [toast, setToast] = useState('')
@@ -1818,14 +1828,16 @@ export default function App() {
           </div>
           <div className="viewport-view-options floating-panel">
             <button className={showGrid ? 'is-active' : ''} onClick={() => setShowGrid(value => !value)}><Grid3X3 size={14} /> 网格</button>
+            <button className={cameraView ? 'is-active' : ''} onClick={() => setCameraView(value => !value)} title="使用最终摄像机画幅摆放参考图和模型"><ScanLine size={14} /> 镜头对齐</button>
             <button><span className="solid-sphere" /> 实体</button>
           </div>
-          <div className="viewport-label"><strong>透视视图</strong><span>场景单位 · 世界坐标</span></div>
-          <ReferenceOverlay reference={reference} onChange={setReference} onToast={setToast} />
-          <div className="viewport-canvas-layer">
-            <MainViewport objects={animatedObjects} animationTime={currentFrame / fps} selectedId={selectedId} activeJoint={selectedJoint} onSelect={setSelectedId} onJointSelect={(objectId, jointId) => { setSelectedId(objectId); setSelectedJoint(jointId) }} transformMode={transformMode} onUpdateObject={updateObjectById} cameraData={displayCamera} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} showGrid={showGrid} focusRequest={viewFocusRequest} referenceVisible={Boolean(reference.image && reference.visible)} />
-          </div>
-          <div className="navigation-hint"><span><MousePointer2 size={12} /> 左键选择</span><span>中键旋转视角</span><span>滚轮缩放</span></div>
+          <div className="viewport-label"><strong>{cameraView ? '镜头对齐视图' : '透视视图'}</strong><span>{cameraView ? `${displayCamera.aspectRatio || '16:9'} · 与 PNG / MP4 构图一致` : '场景单位 · 世界坐标'}</span></div>
+          <ReferenceOverlay reference={reference} onChange={setReference} onToast={setToast} cameraMode={cameraView} cameraAspect={previewAspect} onImageLoaded={() => setCameraView(true)}>
+            <div className="viewport-canvas-layer">
+              <MainViewport cameraView={cameraView} objects={animatedObjects} animationTime={currentFrame / fps} selectedId={selectedId} activeJoint={selectedJoint} onSelect={setSelectedId} onJointSelect={(objectId, jointId) => { setSelectedId(objectId); setSelectedJoint(jointId) }} transformMode={transformMode} onUpdateObject={updateObjectById} cameraData={displayCamera} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} showGrid={showGrid} focusRequest={viewFocusRequest} referenceVisible={Boolean(reference.image && reference.visible)} />
+            </div>
+          </ReferenceOverlay>
+          <div className="navigation-hint"><span><MousePointer2 size={12} /> 左键选择</span>{cameraView ? <span>镜头画面与导出一致</span> : <><span>中键旋转视角</span><span>滚轮缩放</span></>}</div>
           <div className="camera-monitor">
             <div className="monitor-head"><div><Video size={13} /><strong>摄像机 01</strong><span>SHOT PREVIEW</span></div><button onClick={() => setSelectedId(CAMERA_ID)}><ZoomIn size={13} /></button></div>
             <div className="monitor-frame">

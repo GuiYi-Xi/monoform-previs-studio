@@ -231,6 +231,11 @@ button:disabled { opacity: .28; cursor: not-allowed !important; }
 .viewport-shell canvas { display: block; width: 100% !important; height: 100% !important; }
 .viewport-canvas-layer { position: absolute; z-index: 1; inset: 0; }
 .viewport-canvas-layer > div { width: 100%; height: 100%; }
+.camera-edit-frame { position: absolute; z-index: 0; inset: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #191918; container-type: size; }
+.camera-edit-stage { position: relative; width: 100%; height: 100%; max-width: 100%; max-height: 100%; overflow: hidden; background: #555653; }
+@supports (width: 1cqh) {
+  .camera-edit-stage { width: min(100%, calc(100cqh * var(--camera-aspect, 1.7778))); height: min(100%, calc(100cqw / var(--camera-aspect, 1.7778))); }
+}
 .floating-panel { position: absolute; z-index: 5; display: flex; background: rgba(35,35,33,.92); border: 1px solid rgba(255,255,255,.08); border-radius: 7px; box-shadow: 0 8px 20px rgba(0,0,0,.18); backdrop-filter: blur(8px); }
 .viewport-toolbar { top: 12px; left: 50%; transform: translateX(-50%); height: 34px; padding: 3px; gap: 2px; }
 .viewport-toolbar > span { width: 1px; height: 16px; align-self: center; background: var(--line); margin: 0 2px; }

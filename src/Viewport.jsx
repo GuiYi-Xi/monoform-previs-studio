@@ -1160,7 +1160,7 @@ function ViewFocusController({ request }) {
   return null
 }
 
-function EditorScene({ objects, selectedId, activeJoint, onSelect, onJointSelect, transformMode, onUpdateObject, cameraData, onUpdateCamera, showGrid, focusRequest, referenceVisible = false, animationTime = 0 }) {
+function EditorScene({ objects, selectedId, activeJoint, onSelect, onJointSelect, transformMode, onUpdateObject, cameraData, onUpdateCamera, showGrid, focusRequest, referenceVisible = false, cameraView = false, animationTime = 0 }) {
   return (
     <>
       {!referenceVisible && <color attach="background" args={['#555653']} />}
@@ -1168,10 +1168,10 @@ function EditorScene({ objects, selectedId, activeJoint, onSelect, onJointSelect
       <StudioLights />
       <Ground showGrid={showGrid} showSurface={!referenceVisible} />
       {objects.map(object => <SceneObject key={object.id} data={object} selected={selectedId === object.id} selectedId={selectedId} activeJoint={activeJoint} transformMode={transformMode} onSelect={onSelect} onJointSelect={onJointSelect} onUpdate={onUpdateObject} animationTime={animationTime} />)}
-      <CameraModel data={cameraData} selected={selectedId === CAMERA_ID} selectedId={selectedId} transformMode={transformMode} onSelect={onSelect} onUpdate={onUpdateCamera} />
+      {!cameraView && <CameraModel data={cameraData} selected={selectedId === CAMERA_ID} selectedId={selectedId} transformMode={transformMode} onSelect={onSelect} onUpdate={onUpdateCamera} />}
       <ContactShadows position={[0, 0.01, 0]} opacity={0.42} scale={18} blur={2.4} far={9} />
-      <OrbitControls makeDefault target={[0, 1, 0]} minDistance={2} maxDistance={35} maxPolarAngle={Math.PI * 0.49} />
-      <ViewFocusController request={focusRequest} />
+      {cameraView ? <PreviewCameraController cameraData={cameraData} /> : <OrbitControls makeDefault target={[0, 1, 0]} minDistance={2} maxDistance={35} maxPolarAngle={Math.PI * 0.49} />}
+      {!cameraView && <ViewFocusController request={focusRequest} />}
     </>
   )
 }
@@ -1219,7 +1219,7 @@ function PreviewScene({ objects, cameraData, backgroundCanvas = null, animationT
 
 export function MainViewport(props) {
   return (
-    <Canvas shadows="basic" dpr={[1, 1.75]} camera={{ position: [8.5, 6.4, 9.5], fov: 42, near: 0.05, far: 200 }} onPointerMissed={() => props.onSelect(null)} gl={{ alpha: true, antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.88 }}>
+    <Canvas shadows="basic" dpr={[1, 1.75]} camera={{ position: props.cameraView ? props.cameraData.position : [8.5, 6.4, 9.5], fov: 42, near: 0.05, far: 200 }} onPointerMissed={() => props.onSelect(null)} gl={{ alpha: true, antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.88 }}>
       <EditorScene {...props} />
     </Canvas>
   )
