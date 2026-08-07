@@ -6,6 +6,8 @@ MONOFORM 是一款面向分镜、构图和镜头预演的轻量三维白模工�
 
 ### [立即打开 MONOFORM](https://guiyi-xi.github.io/monoform-previs-studio/)
 
+完整功能说明请查看：[MONOFORM 使用说明](docs/USER_GUIDE.md)
+
 人物白模已经内置在项目中，无需另外下载或导入。在线版首次打开时，浏览器会从本站加载约 3 MB 的内置模型资源，之后通常会使用浏览器缓存。推荐使用最新版 Chrome 或 Edge，建议在电脑端全屏使用。
 
 ![MONOFORM 完整工作台](docs/screenshots/monoform-overview.png)
