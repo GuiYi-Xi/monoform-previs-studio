@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Box, BoxSelect, Camera, ChevronDown, ChevronUp, CircleDot, Copy, Download,
+  Box, BoxSelect, Camera, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleDot, Copy, Download,
   FileImage, FileVideo2, Focus, FolderOpen, Grid3X3, Import, Link2, Lock, MousePointer2, Move3D, Pause, Play, Plus,
-  Redo2, RotateCw, Save, Settings2, SkipBack, SkipForward, Sparkles, Sun,
+  Maximize2, Minimize2, Minus, Redo2, RotateCw, Save, Settings2, SkipBack, SkipForward, SlidersHorizontal, Sparkles, Sun,
   ScanLine, Trash2, Undo2, Unlink2, UserRound, Video, ZoomIn,
   Unlock,
 } from 'lucide-react'
@@ -842,6 +842,42 @@ function LightingPanel({ lighting, onChange, onClose }) {
   )
 }
 
+function CameraAnglePanel({ camera, onChange, onClose, onLevel }) {
+  const rotation = Array.isArray(camera.rotation) ? camera.rotation : [0, 0, 0]
+  const updateAxis = (axis, degrees) => {
+    const next = [...rotation]
+    next[axis] = Number(degrees) * Math.PI / 180
+    onChange({ rotation: next })
+  }
+  const range = (label, axis, minimum, maximum) => {
+    const degrees = Math.round((rotation[axis] || 0) * 180 / Math.PI)
+    return (
+      <label className="camera-angle-range" key={label}>
+        <span>{label}</span>
+        <input type="range" aria-label={`摄像机${label}`} min={minimum} max={maximum} step="1" value={degrees} onChange={event => updateAxis(axis, event.target.value)} />
+        <output>{degrees}°</output>
+      </label>
+    )
+  }
+  return (
+    <div className="camera-angle-panel floating-panel" role="dialog" aria-label="摄像机角度调整">
+      <div className="camera-angle-head">
+        <div><SlidersHorizontal size={14} /><span><strong>镜头角度</strong><small>参考图地面与水平线校正</small></span></div>
+        <button type="button" onClick={onClose} aria-label="收起镜头角度面板"><ChevronUp size={13} /></button>
+      </div>
+      <div className="camera-angle-body">
+        {range('俯仰', 0, -89, 89)}
+        {range('水平', 1, -180, 180)}
+        {range('翻滚', 2, -45, 45)}
+      </div>
+      <div className="camera-angle-foot">
+        <span>先用“翻滚”校正倾斜，再用俯仰和水平匹配参考图透视。</span>
+        <button type="button" onClick={onLevel}>水平归正</button>
+      </div>
+    </div>
+  )
+}
+
 function Timeline({ currentFrame, fps, totalFrames, onSeek, playing, onTogglePlay, keyframes, onAddKeyframe, onDeleteKeyframe, objectTrack, onAddObjectKeyframe, onDeleteObjectKeyframe, selectedKeyframe, onSelectKeyframe, onMoveKeyframe, onCopyKeyframe, onPasteKeyframe, onDeleteSelectedKeyframe, onChangeInterpolation, hasClipboard }) {
   const [dragging, setDragging] = useState(null)
   const rulerFrames = useMemo(() => [...new Set(Array.from({ length: 6 }, (_, index) => Math.round(totalFrames * index / 5)))], [totalFrames])
@@ -1108,6 +1144,9 @@ export default function App() {
   const [showGrid, setShowGrid] = useState(true)
   const [cameraView, setCameraView] = useState(false)
   const [lightingPanelOpen, setLightingPanelOpen] = useState(false)
+  const [cameraAnglePanelOpen, setCameraAnglePanelOpen] = useState(false)
+  const [viewOptionsCollapsed, setViewOptionsCollapsed] = useState(false)
+  const [monitorMode, setMonitorMode] = useState('normal')
   const [editorView, setEditorView] = useState({ position: [8.5, 6.4, 9.5], target: [0, 1, 0] })
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [viewFocusRequest, setViewFocusRequest] = useState(null)
@@ -1579,7 +1618,23 @@ export default function App() {
     setEditorView(cloneProjectValue(editorViewRef.current))
     setCameraView(true)
   }
-  const openEditorView = () => setCameraView(false)
+  const openEditorView = () => {
+    setCameraView(false)
+    setCameraAnglePanelOpen(false)
+  }
+  const levelCameraHorizon = () => {
+    setCamera(current => {
+      const rotation = Array.isArray(current.rotation) ? [...current.rotation] : [0, 0, 0]
+      rotation[2] = 0
+      return { ...current, rotation }
+    })
+    setToast('摄像机翻滚已归零 · 地面水平线已校正')
+  }
+  const collapseViewOptions = () => {
+    setViewOptionsCollapsed(true)
+    setLightingPanelOpen(false)
+    setCameraAnglePanelOpen(false)
+  }
   const saveCustomPose = person => {
     if (!person || person.type !== 'person') return
     const suggestedName = `自定义姿势 ${customPoses.length + 1}`
@@ -1957,24 +2012,40 @@ export default function App() {
             {transformMode === 'rotate' && (selectedId === CAMERA_ID ? 'E 摄像机旋转 · 当前选择已锁定 · 拖动红 / 绿 / 蓝圆环' : 'E 整体旋转 · 当前选择已锁定 · 左右水平 / 上下纵向 / Shift 翻滚')}
             {transformMode === 'scale' && 'R 整体缩放 · 当前选择已锁定 · 拖动坐标轴或中心块'}
           </div>
-          <div className="viewport-view-options floating-panel">
-            <button className={showGrid ? 'is-active' : ''} onClick={() => setShowGrid(value => !value)}><Grid3X3 size={14} /> 网格</button>
-            <button className={lightingPanelOpen ? 'is-active' : ''} onClick={() => setLightingPanelOpen(value => !value)} title="调整当前镜头的环境光和主光"><Sun size={14} /> 光照</button>
-            <button className={!cameraView ? 'is-active' : ''} onClick={openEditorView} title="使用固定的编辑观察相机自由布置场景"><RotateCw size={14} /> 编辑视角</button>
-            <button className={cameraView ? 'is-active' : ''} onClick={openCameraView} title="切换到场景中主摄像机的实际画面"><Camera size={14} /> 摄像机视角</button>
-            <button><span className="solid-sphere" /> 实体</button>
+          <div className={`viewport-view-options floating-panel ${viewOptionsCollapsed ? 'is-collapsed' : ''}`}>
+            {viewOptionsCollapsed ? (
+              <button className="view-options-expand" onClick={() => setViewOptionsCollapsed(false)} title="展开视角工具" aria-label="展开视角工具"><ChevronLeft size={14} /></button>
+            ) : (
+              <>
+                <button className={showGrid ? 'is-active' : ''} onClick={() => setShowGrid(value => !value)}><Grid3X3 size={14} /> 网格</button>
+                <button className={lightingPanelOpen ? 'is-active' : ''} onClick={() => { setLightingPanelOpen(value => !value); setCameraAnglePanelOpen(false) }} title="调整当前镜头的环境光和主光"><Sun size={14} /> 光照</button>
+                <button className={!cameraView ? 'is-active' : ''} onClick={openEditorView} title="使用固定的编辑观察相机自由布置场景"><RotateCw size={14} /> 编辑视角</button>
+                <button className={cameraView ? 'is-active' : ''} onClick={openCameraView} title="切换到场景中主摄像机的实际画面"><Camera size={14} /> 摄像机视角</button>
+                {cameraView && <button className={cameraAnglePanelOpen ? 'is-active' : ''} onClick={() => { setCameraAnglePanelOpen(value => !value); setLightingPanelOpen(false) }} title="调整参考图视角中的地面和水平线"><SlidersHorizontal size={14} /> 镜头角度</button>}
+                <button><span className="solid-sphere" /> 实体</button>
+                <button className="view-options-collapse" onClick={collapseViewOptions} title="收起视角工具" aria-label="收起视角工具"><ChevronRight size={14} /></button>
+              </>
+            )}
           </div>
           {lightingPanelOpen && <LightingPanel lighting={lighting} onChange={setLighting} onClose={() => setLightingPanelOpen(false)} />}
+          {cameraView && cameraAnglePanelOpen && <CameraAnglePanel camera={camera} onChange={patch => setCamera(current => ({ ...current, ...patch }))} onClose={() => setCameraAnglePanelOpen(false)} onLevel={levelCameraHorizon} />}
           <div className="viewport-label"><strong>{cameraView ? '摄像机视角' : '编辑视角'}</strong><span>{cameraView ? `${displayCamera.aspectRatio || '16:9'} · 正在查看场景中的主摄像机` : '固定观察相机 · 可查看并调整场景中的主摄像机'}</span></div>
           <ReferenceOverlay reference={reference} onChange={setReference} onToast={setToast} cameraMode={cameraView} cameraAspect={previewAspect}>
             <div className="viewport-canvas-layer">
-              <MainViewport key={cameraView ? 'shot-view' : 'scene-view'} cameraView={cameraView} editorCameraData={editorView} onEditorCameraChange={captureEditorView} objects={animatedObjects} animationTime={currentFrame / fps} selectedId={selectedId} activeJoint={selectedJoint} onSelect={setSelectedId} onJointSelect={(objectId, jointId) => { setSelectedId(objectId); setSelectedJoint(jointId) }} transformMode={transformMode} onUpdateObject={updateObjectById} cameraData={displayCamera} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} lighting={lighting} showGrid={cameraView ? false : showGrid} focusRequest={viewFocusRequest} referenceVisible={Boolean(reference.image && (cameraView ? reference.includeInExport : reference.visible))} />
+              <MainViewport key={cameraView ? 'shot-view' : 'scene-view'} cameraView={cameraView} editorCameraData={editorView} onEditorCameraChange={captureEditorView} objects={animatedObjects} animationTime={currentFrame / fps} selectedId={selectedId} activeJoint={selectedJoint} onSelect={setSelectedId} onJointSelect={(objectId, jointId) => { setSelectedId(objectId); setSelectedJoint(jointId) }} transformMode={transformMode} onUpdateObject={updateObjectById} cameraData={displayCamera} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} lighting={lighting} showGrid={showGrid} focusRequest={viewFocusRequest} referenceVisible={Boolean(reference.image && (cameraView ? reference.includeInExport : reference.visible))} />
             </div>
           </ReferenceOverlay>
-          <div className="navigation-hint"><span><MousePointer2 size={12} /> 点击物体选择</span>{cameraView ? <><span>主摄像机画面</span><span>与 PNG / MP4 导出一致</span></> : <><span>空白处左键旋转</span><span>右键平移</span><span>滚轮缩放</span></>}</div>
-          <div className="camera-monitor">
-            <div className="monitor-head"><div><Video size={13} /><strong>主摄像机 01</strong><span>CAMERA VIEW</span></div><div className="monitor-head-actions"><button title="选择场景中的主摄像机" onClick={() => setSelectedId(CAMERA_ID)}><Camera size={12} /></button><button title="切换到摄像机视角" onClick={openCameraView}><ZoomIn size={13} /></button></div></div>
-            <div className="monitor-frame">
+          <div className="navigation-hint"><span><MousePointer2 size={12} /> 点击物体选择</span>{cameraView ? <><span>主摄像机画面</span><span>网格仅辅助 · 不进入导出</span></> : <><span>空白处左键旋转</span><span>右键平移</span><span>滚轮缩放</span></>}</div>
+          <div className={`camera-monitor is-${monitorMode}`}>
+            <div className="monitor-head"><div><Video size={13} /><strong>主摄像机 01</strong><span>{monitorMode === 'minimized' ? 'CAMERA' : 'CAMERA VIEW'}</span></div><div className="monitor-head-actions">
+              {monitorMode === 'minimized' ? <button title="恢复摄像机窗口" onClick={() => setMonitorMode('normal')}><Maximize2 size={13} /></button> : <>
+                <button title="选择场景中的主摄像机" onClick={() => setSelectedId(CAMERA_ID)}><Camera size={12} /></button>
+                <button title="最小化摄像机窗口" onClick={() => setMonitorMode('minimized')}><Minus size={13} /></button>
+                <button title={monitorMode === 'expanded' ? '恢复摄像机窗口大小' : '放大摄像机窗口'} onClick={() => setMonitorMode(mode => mode === 'expanded' ? 'normal' : 'expanded')}>{monitorMode === 'expanded' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button>
+                <button title="切换到摄像机视角" onClick={openCameraView}><ZoomIn size={13} /></button>
+              </>}
+            </div></div>
+            {monitorMode !== 'minimized' && <div className="monitor-frame">
               <div className={`monitor-canvas ${previewAspectClass}`} style={{ '--preview-aspect': previewAspect }}>
                 <CameraPreview objects={animatedObjects} animationTime={currentFrame / fps} cameraData={displayCamera} lighting={lighting} backgroundCanvas={monitorReferenceBackground} onCanvasReady={canvas => { monitorCanvasRef.current = canvas }} />
                 <span className="safe-frame" />
@@ -1982,7 +2053,7 @@ export default function App() {
                 <span className="monitor-timecode">{timecodeAtFrame(currentFrame, fps)}</span>
                 <span className="monitor-focal">{Math.round(displayCamera.focalLength)} mm · {displayCamera.aspectRatio || '16:9'}</span>
               </div>
-            </div>
+            </div>}
           </div>
         </section>
         <Inspector selected={inspectorSelected} camera={camera} selectedJoint={selectedJoint} customPoses={customPoses} onSelectJoint={setSelectedJoint} onUpdateObject={updateSelected} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} onDelete={deleteSelected} onDuplicate={duplicateSelected} onFocus={focusSelected} onToggleLock={() => activeObject && updateSelected({ locked: !activeObject.locked })} onSaveCustomPose={saveCustomPose} onApplyCustomPose={applyCustomPose} onDeleteCustomPose={deleteCustomPose} />

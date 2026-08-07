@@ -269,6 +269,9 @@ button:disabled { opacity: .28; cursor: not-allowed !important; }
 .viewport-view-options { top: 12px; right: 12px; height: 34px; padding: 3px; }
 .viewport-view-options button { height: 26px; border: 0; background: transparent; color: #bbb9b1; display: flex; align-items: center; gap: 5px; font-size: 9px; padding: 0 7px; border-radius: 4px; cursor: pointer; }
 .viewport-view-options button:hover, .viewport-view-options button.is-active { background: rgba(255,255,255,.1); color: white; }
+.viewport-view-options.is-collapsed { width: 34px; }
+.viewport-view-options .view-options-collapse, .viewport-view-options .view-options-expand { width: 26px; padding: 0; justify-content: center; color: var(--text-faint); }
+.viewport-view-options .view-options-collapse { margin-left: 1px; border-left: 1px solid rgba(255,255,255,.08); border-radius: 0 4px 4px 0; }
 .lighting-panel { z-index: 9; top: 52px; right: 12px; width: 310px; max-height: calc(100% - 116px); display: block; overflow: hidden; }
 .lighting-panel-head { min-height: 43px; padding: 0 9px 0 11px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,.07); }
 .lighting-panel-head > div { display: flex; align-items: center; gap: 8px; color: var(--accent); }
@@ -288,6 +291,22 @@ button:disabled { opacity: .28; cursor: not-allowed !important; }
 .lighting-panel-foot { min-height: 38px; padding: 6px 10px; display: flex; justify-content: flex-end; border-top: 1px solid rgba(255,255,255,.07); }
 .lighting-panel-foot button { height: 25px; padding: 0 8px; border: 1px solid #4b473e; border-radius: 4px; background: #2b2924; color: #cdbb92; font-size: 8px; cursor: pointer; }
 .lighting-panel-foot button:hover { border-color: var(--accent); color: #f0d8a3; }
+.camera-angle-panel { z-index: 9; top: 52px; right: 12px; width: 300px; display: block; overflow: hidden; }
+.camera-angle-head { min-height: 43px; padding: 0 9px 0 11px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,.07); }
+.camera-angle-head > div { display: flex; align-items: center; gap: 8px; color: var(--live); }
+.camera-angle-head span { display: flex; flex-direction: column; gap: 2px; }
+.camera-angle-head strong { color: var(--text); font-size: 9px; font-weight: 650; }
+.camera-angle-head small { color: var(--text-faint); font-size: 7px; }
+.camera-angle-head > button { width: 25px; height: 25px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 4px; background: transparent; color: var(--text-faint); cursor: pointer; }
+.camera-angle-head > button:hover { background: rgba(255,255,255,.08); color: var(--text); }
+.camera-angle-body { padding: 11px; display: grid; gap: 10px; }
+.camera-angle-range { display: grid; grid-template-columns: 42px minmax(0,1fr) 43px; align-items: center; gap: 7px; color: var(--text-faint); font-size: 8px; }
+.camera-angle-range input { min-width: 0; width: 100%; height: 14px; margin: 0; accent-color: var(--live); cursor: ew-resize; }
+.camera-angle-range output { color: var(--text-dim); font-family: "Cascadia Mono", monospace; font-size: 7px; text-align: right; }
+.camera-angle-foot { min-height: 48px; padding: 7px 10px; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; border-top: 1px solid rgba(255,255,255,.07); }
+.camera-angle-foot span { color: var(--text-faint); font-size: 7px; line-height: 1.45; }
+.camera-angle-foot button { height: 26px; padding: 0 8px; border: 1px solid rgba(112,182,158,.34); border-radius: 4px; background: #26302c; color: #b8d9ce; font-size: 8px; cursor: pointer; }
+.camera-angle-foot button:hover { border-color: var(--live); color: #d9eee7; }
 .solid-sphere { width: 10px; height: 10px; border-radius: 50%; background: #d4d0c7; box-shadow: inset -3px -3px 4px rgba(0,0,0,.35); }
 .viewport-label { position: absolute; z-index: 4; top: 14px; left: 14px; display: flex; flex-direction: column; gap: 3px; color: #f3f1e9; text-shadow: 0 1px 3px rgba(0,0,0,.3); pointer-events: none; }
 .viewport-label strong { font-size: 10px; }
@@ -296,6 +315,9 @@ button:disabled { opacity: .28; cursor: not-allowed !important; }
 .navigation-hint span { display: flex; align-items: center; gap: 4px; }
 
 .camera-monitor { position: absolute; z-index: 6; right: 14px; bottom: 14px; width: min(34%, 350px); min-width: 280px; aspect-ratio: 16 / 10.3; background: #181817; border: 1px solid #55544e; border-radius: 7px; box-shadow: 0 16px 38px rgba(0,0,0,.34); overflow: hidden; }
+.camera-monitor.is-expanded { z-index: 10; width: min(76%, 900px); min-width: 420px; aspect-ratio: 16 / 9.7; box-shadow: 0 24px 70px rgba(0,0,0,.5); }
+.camera-monitor.is-minimized { width: 210px; min-width: 0; height: 29px; aspect-ratio: auto; }
+.camera-monitor.is-minimized .monitor-head { border-bottom: 0; }
 .monitor-head { height: 27px; display: flex; align-items: center; justify-content: space-between; padding: 0 6px 0 9px; background: #252523; border-bottom: 1px solid #3b3b37; }
 .monitor-head > div { display: flex; align-items: center; gap: 6px; }
 .monitor-head strong { font-size: 9px; font-weight: 600; }
