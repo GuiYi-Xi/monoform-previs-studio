@@ -269,6 +269,25 @@ button:disabled { opacity: .28; cursor: not-allowed !important; }
 .viewport-view-options { top: 12px; right: 12px; height: 34px; padding: 3px; }
 .viewport-view-options button { height: 26px; border: 0; background: transparent; color: #bbb9b1; display: flex; align-items: center; gap: 5px; font-size: 9px; padding: 0 7px; border-radius: 4px; cursor: pointer; }
 .viewport-view-options button:hover, .viewport-view-options button.is-active { background: rgba(255,255,255,.1); color: white; }
+.lighting-panel { z-index: 9; top: 52px; right: 12px; width: 310px; max-height: calc(100% - 116px); display: block; overflow: hidden; }
+.lighting-panel-head { min-height: 43px; padding: 0 9px 0 11px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,.07); }
+.lighting-panel-head > div { display: flex; align-items: center; gap: 8px; color: var(--accent); }
+.lighting-panel-head span { display: flex; flex-direction: column; gap: 2px; }
+.lighting-panel-head strong { color: var(--text); font-size: 9px; font-weight: 650; }
+.lighting-panel-head small { color: var(--text-faint); font-size: 7px; letter-spacing: .06em; }
+.lighting-panel-head > button { width: 25px; height: 25px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 4px; background: transparent; color: var(--text-faint); cursor: pointer; }
+.lighting-panel-head > button:hover { background: rgba(255,255,255,.08); color: var(--text); }
+.lighting-panel-body { max-height: calc(100vh - 260px); overflow: auto; padding: 10px 11px; display: grid; gap: 9px; scrollbar-width: thin; scrollbar-color: #555248 transparent; }
+.lighting-range { display: grid; grid-template-columns: 61px minmax(0,1fr) 43px; align-items: center; gap: 7px; color: var(--text-faint); font-size: 8px; }
+.lighting-range input { min-width: 0; width: 100%; height: 14px; margin: 0; accent-color: var(--accent); cursor: ew-resize; }
+.lighting-range output { color: var(--text-dim); font-family: "Cascadia Mono", monospace; font-size: 7px; text-align: right; }
+.lighting-colors { margin-top: 2px; padding-top: 9px; display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 6px; border-top: 1px solid rgba(255,255,255,.06); }
+.lighting-color { min-width: 0; padding: 6px; display: grid; grid-template-columns: 1fr 25px; align-items: center; gap: 5px; border: 1px solid #41413c; border-radius: 5px; background: #242422; color: var(--text-faint); font-size: 7px; }
+.lighting-color input { width: 25px; height: 21px; padding: 2px; border: 1px solid #4c4b44; border-radius: 3px; background: #1d1d1b; }
+.lighting-color output { grid-column: 1 / -1; overflow: hidden; color: var(--text-faint); font-family: "Cascadia Mono", monospace; font-size: 6px; text-overflow: ellipsis; }
+.lighting-panel-foot { min-height: 38px; padding: 6px 10px; display: flex; justify-content: flex-end; border-top: 1px solid rgba(255,255,255,.07); }
+.lighting-panel-foot button { height: 25px; padding: 0 8px; border: 1px solid #4b473e; border-radius: 4px; background: #2b2924; color: #cdbb92; font-size: 8px; cursor: pointer; }
+.lighting-panel-foot button:hover { border-color: var(--accent); color: #f0d8a3; }
 .solid-sphere { width: 10px; height: 10px; border-radius: 50%; background: #d4d0c7; box-shadow: inset -3px -3px 4px rgba(0,0,0,.35); }
 .viewport-label { position: absolute; z-index: 4; top: 14px; left: 14px; display: flex; flex-direction: column; gap: 3px; color: #f3f1e9; text-shadow: 0 1px 3px rgba(0,0,0,.3); pointer-events: none; }
 .viewport-label strong { font-size: 10px; }

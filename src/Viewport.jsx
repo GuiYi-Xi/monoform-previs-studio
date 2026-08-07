@@ -1140,14 +1140,40 @@ function CameraModel({ data, selected, selectedId, transformMode, onSelect, onUp
   )
 }
 
-function StudioLights() {
+const DEFAULT_STUDIO_LIGHTING = {
+  ambientIntensity: 1.35,
+  keyIntensity: 2.8,
+  fillIntensity: 1.1,
+  keyAzimuth: 39,
+  keyElevation: 51,
+  exposure: 0.9,
+  ambientColor: '#f7f1e6',
+  keyColor: '#fff6e8',
+  fillColor: '#a9c2c6',
+}
+
+function StudioLights({ lighting = DEFAULT_STUDIO_LIGHTING }) {
+  const azimuth = THREE.MathUtils.degToRad(lighting.keyAzimuth ?? DEFAULT_STUDIO_LIGHTING.keyAzimuth)
+  const elevation = THREE.MathUtils.degToRad(lighting.keyElevation ?? DEFAULT_STUDIO_LIGHTING.keyElevation)
+  const horizontal = Math.cos(elevation) * 10
+  const height = Math.sin(elevation) * 10
+  const keyPosition = [Math.sin(azimuth) * horizontal, height, Math.cos(azimuth) * horizontal]
+  const fillPosition = [-keyPosition[0] * 0.85, Math.max(2.5, height * 0.42), -keyPosition[2] * 0.85]
   return (
     <>
-      <hemisphereLight intensity={1.35} color="#f7f1e6" groundColor="#343536" />
-      <directionalLight castShadow position={[4, 8, 5]} intensity={2.8} color="#fff6e8" shadow-mapSize={[2048, 2048]} shadow-camera-left={-10} shadow-camera-right={10} shadow-camera-top={10} shadow-camera-bottom={-10} />
-      <directionalLight position={[-5, 3, -4]} intensity={1.1} color="#a9c2c6" />
+      <hemisphereLight intensity={lighting.ambientIntensity ?? DEFAULT_STUDIO_LIGHTING.ambientIntensity} color={lighting.ambientColor || DEFAULT_STUDIO_LIGHTING.ambientColor} groundColor="#343536" />
+      <directionalLight castShadow position={keyPosition} intensity={lighting.keyIntensity ?? DEFAULT_STUDIO_LIGHTING.keyIntensity} color={lighting.keyColor || DEFAULT_STUDIO_LIGHTING.keyColor} shadow-mapSize={[2048, 2048]} shadow-camera-left={-10} shadow-camera-right={10} shadow-camera-top={10} shadow-camera-bottom={-10} />
+      <directionalLight position={fillPosition} intensity={lighting.fillIntensity ?? DEFAULT_STUDIO_LIGHTING.fillIntensity} color={lighting.fillColor || DEFAULT_STUDIO_LIGHTING.fillColor} />
     </>
   )
+}
+
+function RendererExposure({ value = DEFAULT_STUDIO_LIGHTING.exposure }) {
+  const { gl } = useThree()
+  useEffect(() => {
+    gl.toneMappingExposure = value
+  }, [gl, value])
+  return null
 }
 
 function Ground({ showGrid = true, showSurface = true }) {
@@ -1202,12 +1228,13 @@ function EditorCameraReporter({ enabled, onChange }) {
   return null
 }
 
-function EditorScene({ objects, selectedId, activeJoint, onSelect, onJointSelect, transformMode, onUpdateObject, cameraData, onUpdateCamera, editorCameraData, onEditorCameraChange, showGrid, focusRequest, referenceVisible = false, cameraView = false, animationTime = 0 }) {
+function EditorScene({ objects, selectedId, activeJoint, onSelect, onJointSelect, transformMode, onUpdateObject, cameraData, onUpdateCamera, editorCameraData, onEditorCameraChange, lighting, showGrid, focusRequest, referenceVisible = false, cameraView = false, animationTime = 0 }) {
   return (
     <>
       {!referenceVisible && <color attach="background" args={['#555653']} />}
       <fog attach="fog" args={['#555653', 18, 42]} />
-      <StudioLights />
+      <RendererExposure value={lighting?.exposure} />
+      <StudioLights lighting={lighting} />
       <Ground showGrid={showGrid} showSurface={!referenceVisible} />
       {objects.map(object => <SceneObject key={object.id} data={object} selected={selectedId === object.id} selectedId={selectedId} activeJoint={activeJoint} transformMode={transformMode} onSelect={onSelect} onJointSelect={onJointSelect} onUpdate={onUpdateObject} animationTime={animationTime} />)}
       {!cameraView && <CameraModel data={cameraData} selected={selectedId === CAMERA_ID} selectedId={selectedId} transformMode={transformMode} onSelect={onSelect} onUpdate={onUpdateCamera} />}
@@ -1246,12 +1273,13 @@ function CanvasBackground({ canvas }) {
   return texture ? <primitive attach="background" object={texture} /> : <color attach="background" args={['#9b9c98']} />
 }
 
-function PreviewScene({ objects, cameraData, backgroundCanvas = null, animationTime = 0 }) {
+function PreviewScene({ objects, cameraData, lighting, backgroundCanvas = null, animationTime = 0 }) {
   return (
     <>
       <CanvasBackground canvas={backgroundCanvas} />
       <fog attach="fog" args={['#9b9c98', 18, 38]} />
-      <StudioLights />
+      <RendererExposure value={lighting?.exposure} />
+      <StudioLights lighting={lighting} />
       <Ground showGrid={false} showSurface={!backgroundCanvas} />
       {objects.map(object => <SceneObject key={object.id} data={object} animationTime={animationTime} preview />)}
       <ContactShadows position={[0, 0.01, 0]} opacity={0.35} scale={18} blur={2.2} far={9} />
@@ -1278,7 +1306,7 @@ export function MainViewport(props) {
   )
 }
 
-export function CameraPreview({ objects, cameraData, backgroundCanvas = null, animationTime = 0, onCanvasReady, exportMode = false }) {
+export function CameraPreview({ objects, cameraData, lighting, backgroundCanvas = null, animationTime = 0, onCanvasReady, exportMode = false }) {
   return (
     <Canvas
       shadows="basic"
@@ -1287,7 +1315,7 @@ export function CameraPreview({ objects, cameraData, backgroundCanvas = null, an
       gl={{ antialias: true, preserveDrawingBuffer: exportMode || Boolean(onCanvasReady), toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.9 }}
       onCreated={({ gl }) => onCanvasReady?.(gl.domElement)}
     >
-      <PreviewScene objects={objects} cameraData={cameraData} backgroundCanvas={backgroundCanvas} animationTime={animationTime} />
+      <PreviewScene objects={objects} cameraData={cameraData} lighting={lighting} backgroundCanvas={backgroundCanvas} animationTime={animationTime} />
     </Canvas>
   )
 }

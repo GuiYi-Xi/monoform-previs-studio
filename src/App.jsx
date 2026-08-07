@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Box, BoxSelect, Camera, ChevronDown, ChevronUp, CircleDot, Copy, Download,
   FileImage, FileVideo2, Focus, FolderOpen, Grid3X3, Import, Link2, Lock, MousePointer2, Move3D, Pause, Play, Plus,
-  Redo2, RotateCw, Save, Settings2, SkipBack, SkipForward, Sparkles,
+  Redo2, RotateCw, Save, Settings2, SkipBack, SkipForward, Sparkles, Sun,
   ScanLine, Trash2, Undo2, Unlink2, UserRound, Video, ZoomIn,
   Unlock,
 } from 'lucide-react'
@@ -14,12 +14,23 @@ const CAMERA_ID = '__shot_camera__'
 const PROJECT_STORAGE_KEY = 'monoform-project'
 const LEGACY_PROJECT_STORAGE_KEY = 'stageframe-project'
 const CUSTOM_POSE_STORAGE_KEY = 'monoform-custom-poses'
-const PROJECT_VERSION = 14
+const PROJECT_VERSION = 15
 const DEFAULT_PROJECT_SETTINGS = {
   name: '未命名场景',
   fps: 24,
   durationSeconds: 5,
   loopPlayback: false,
+}
+const DEFAULT_LIGHTING = {
+  ambientIntensity: 1.35,
+  keyIntensity: 2.8,
+  fillIntensity: 1.1,
+  keyAzimuth: 39,
+  keyElevation: 51,
+  exposure: 0.9,
+  ambientColor: '#f7f1e6',
+  keyColor: '#fff6e8',
+  fillColor: '#a9c2c6',
 }
 const FPS_OPTIONS = [24, 25, 30]
 const FOCAL_LENGTH_PRESETS = [18, 24, 35, 50, 85, 120]
@@ -166,6 +177,25 @@ function normalizeProjectSettings(settings = {}) {
   }
 }
 
+function normalizeLighting(lighting = {}) {
+  const numeric = (value, fallback, minimum, maximum) => {
+    const parsed = Number(value)
+    return clamp(Number.isFinite(parsed) ? parsed : fallback, minimum, maximum)
+  }
+  const color = (value, fallback) => /^#[0-9a-f]{6}$/i.test(String(value || '')) ? String(value) : fallback
+  return {
+    ambientIntensity: numeric(lighting.ambientIntensity, DEFAULT_LIGHTING.ambientIntensity, 0, 3),
+    keyIntensity: numeric(lighting.keyIntensity, DEFAULT_LIGHTING.keyIntensity, 0, 6),
+    fillIntensity: numeric(lighting.fillIntensity, DEFAULT_LIGHTING.fillIntensity, 0, 4),
+    keyAzimuth: numeric(lighting.keyAzimuth, DEFAULT_LIGHTING.keyAzimuth, -180, 180),
+    keyElevation: numeric(lighting.keyElevation, DEFAULT_LIGHTING.keyElevation, 5, 85),
+    exposure: numeric(lighting.exposure, DEFAULT_LIGHTING.exposure, 0.25, 1.75),
+    ambientColor: color(lighting.ambientColor, DEFAULT_LIGHTING.ambientColor),
+    keyColor: color(lighting.keyColor, DEFAULT_LIGHTING.keyColor),
+    fillColor: color(lighting.fillColor, DEFAULT_LIGHTING.fillColor),
+  }
+}
+
 function timecodeAtFrame(frame, fps) {
   const safeFrame = Math.max(0, Math.round(frame))
   const frames = safeFrame % fps
@@ -257,6 +287,7 @@ function normalizeShot(shot, index, fallback) {
     loopPlayback: timing.loopPlayback,
     objects,
     camera,
+    lighting: normalizeLighting(shot?.lighting || fallback.lighting),
     reference: normalizeReference(shot?.reference || fallback.reference),
     keyframes,
     objectKeyframes,
@@ -273,6 +304,7 @@ function normalizeProjectData(data) {
     settings,
     objects: sourceObjects,
     camera: data.camera || firstShot?.camera || initialCamera,
+    lighting: data.lighting || firstShot?.lighting || DEFAULT_LIGHTING,
     reference: data.reference || firstShot?.reference || DEFAULT_REFERENCE,
     keyframes: data.keyframes || [],
     objectKeyframes: data.objectKeyframes || data.characterKeyframes || {},
@@ -285,6 +317,7 @@ function normalizeProjectData(data) {
     loopPlayback: settings.loopPlayback,
     objects: fallback.objects,
     camera: fallback.camera,
+    lighting: fallback.lighting,
     keyframes: fallback.keyframes,
     objectKeyframes: fallback.objectKeyframes,
   }]
@@ -299,6 +332,7 @@ function normalizeProjectData(data) {
     shots,
     objects: activeShot.objects,
     camera: activeShot.camera,
+    lighting: activeShot.lighting,
     reference: activeShot.reference,
     keyframes: activeShot.keyframes,
     objectKeyframes: activeShot.objectKeyframes,
@@ -320,7 +354,7 @@ function readCachedProject() {
   }
 }
 
-function projectData({ settings, objects, camera, reference, keyframes, objectKeyframes, shots, activeShotId }) {
+function projectData({ settings, objects, camera, lighting, reference, keyframes, objectKeyframes, shots, activeShotId }) {
   const normalizedSettings = normalizeProjectSettings(settings)
   const sourceShots = shots?.length ? shots : [{ id: 'shot-01', name: '镜头 01' }]
   const resolvedActiveShotId = sourceShots.some(shot => shot.id === activeShotId) ? activeShotId : sourceShots[0].id
@@ -332,6 +366,7 @@ function projectData({ settings, objects, camera, reference, keyframes, objectKe
     loopPlayback: normalizedSettings.loopPlayback,
     objects,
     camera,
+    lighting: normalizeLighting(lighting),
     reference,
     keyframes,
     objectKeyframes,
@@ -344,6 +379,7 @@ function projectData({ settings, objects, camera, reference, keyframes, objectKe
     shots: serializedShots,
     objects,
     camera,
+    lighting: normalizeLighting(lighting),
     reference,
     keyframes,
     objectKeyframes,
@@ -758,6 +794,54 @@ function ProjectSettingsDialog({ settings, onApply, onClose }) {
   )
 }
 
+function LightingPanel({ lighting, onChange, onClose }) {
+  const update = patch => onChange(current => normalizeLighting({ ...current, ...patch }))
+  const range = (label, key, minimum, maximum, step, suffix = '') => (
+    <label className="lighting-range" key={key}>
+      <span>{label}</span>
+      <input
+        type="range"
+        aria-label={label}
+        min={minimum}
+        max={maximum}
+        step={step}
+        value={lighting[key]}
+        onChange={event => update({ [key]: Number(event.target.value) })}
+      />
+      <output>{Number(lighting[key]).toFixed(step < 1 ? 2 : 0)}{suffix}</output>
+    </label>
+  )
+  const color = (label, key) => (
+    <label className="lighting-color" key={key}>
+      <span>{label}</span>
+      <input type="color" aria-label={label} value={lighting[key]} onChange={event => update({ [key]: event.target.value })} />
+      <output>{lighting[key]}</output>
+    </label>
+  )
+  return (
+    <div className="lighting-panel floating-panel" role="dialog" aria-label="场景光照调整">
+      <div className="lighting-panel-head">
+        <div><Sun size={14} /><span><strong>场景光照</strong><small>当前镜头 · 导出同步</small></span></div>
+        <button type="button" onClick={onClose} aria-label="收起光照面板"><ChevronUp size={13} /></button>
+      </div>
+      <div className="lighting-panel-body">
+        {range('环境亮度', 'ambientIntensity', 0, 3, 0.05)}
+        {range('主光亮度', 'keyIntensity', 0, 6, 0.05)}
+        {range('补光亮度', 'fillIntensity', 0, 4, 0.05)}
+        {range('水平方向', 'keyAzimuth', -180, 180, 1, '°')}
+        {range('主光高度', 'keyElevation', 5, 85, 1, '°')}
+        {range('画面曝光', 'exposure', 0.25, 1.75, 0.01)}
+        <div className="lighting-colors">
+          {color('环境色', 'ambientColor')}
+          {color('主光色', 'keyColor')}
+          {color('补光色', 'fillColor')}
+        </div>
+      </div>
+      <div className="lighting-panel-foot"><button type="button" onClick={() => onChange(cloneProjectValue(DEFAULT_LIGHTING))}>恢复默认光照</button></div>
+    </div>
+  )
+}
+
 function Timeline({ currentFrame, fps, totalFrames, onSeek, playing, onTogglePlay, keyframes, onAddKeyframe, onDeleteKeyframe, objectTrack, onAddObjectKeyframe, onDeleteObjectKeyframe, selectedKeyframe, onSelectKeyframe, onMoveKeyframe, onCopyKeyframe, onPasteKeyframe, onDeleteSelectedKeyframe, onChangeInterpolation, hasClipboard }) {
   const [dragging, setDragging] = useState(null)
   const rulerFrames = useMemo(() => [...new Set(Array.from({ length: 6 }, (_, index) => Math.round(totalFrames * index / 5)))], [totalFrames])
@@ -998,7 +1082,7 @@ export default function App() {
   const [settings, setSettings] = useState(() => normalizeProjectSettings(startupProject?.settings))
   const [shots, setShots] = useState(() => startupProject?.shots || [{
     id: 'shot-01', name: '镜头 01', thumbnail: '', fps: DEFAULT_PROJECT_SETTINGS.fps, durationSeconds: DEFAULT_PROJECT_SETTINGS.durationSeconds, loopPlayback: false,
-    objects: cloneProjectValue(initialObjects), camera: cloneProjectValue(initialCamera), reference: cloneProjectValue(DEFAULT_REFERENCE), keyframes: [], objectKeyframes: {},
+    objects: cloneProjectValue(initialObjects), camera: cloneProjectValue(initialCamera), lighting: cloneProjectValue(DEFAULT_LIGHTING), reference: cloneProjectValue(DEFAULT_REFERENCE), keyframes: [], objectKeyframes: {},
   }])
   const [activeShotId, setActiveShotId] = useState(() => startupProject?.activeShotId || 'shot-01')
   const [objects, setObjects] = useState(() => startupProject?.objects || initialObjects)
@@ -1006,6 +1090,7 @@ export default function App() {
   const [selectedJoint, setSelectedJoint] = useState('mixamorigSpine2')
   const [transformMode, setTransformMode] = useState('translate')
   const [camera, setCamera] = useState(() => ({ ...initialCamera, ...(startupProject?.camera || {}) }))
+  const [lighting, setLighting] = useState(() => normalizeLighting(startupProject?.lighting))
   const [reference, setReference] = useState(() => normalizeReference(startupProject?.reference))
   const [keyframes, setKeyframes] = useState(() => startupProject?.keyframes || initialKeyframes)
   const [characterKeyframes, setCharacterKeyframes] = useState(() => startupProject?.objectKeyframes || startupProject?.characterKeyframes || initialCharacterKeyframes)
@@ -1022,6 +1107,7 @@ export default function App() {
   const [exportProgress, setExportProgress] = useState(0)
   const [showGrid, setShowGrid] = useState(true)
   const [cameraView, setCameraView] = useState(false)
+  const [lightingPanelOpen, setLightingPanelOpen] = useState(false)
   const [editorView, setEditorView] = useState({ position: [8.5, 6.4, 9.5], target: [0, 1, 0] })
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [viewFocusRequest, setViewFocusRequest] = useState(null)
@@ -1052,10 +1138,11 @@ export default function App() {
     loopPlayback: settings.loopPlayback,
     objects,
     camera,
+    lighting,
     reference,
     keyframes,
     objectKeyframes: characterKeyframes,
-  } : shot), [activeShotId, camera, characterKeyframes, keyframes, objects, reference, settings.durationSeconds, settings.fps, settings.loopPlayback, shots])
+  } : shot), [activeShotId, camera, characterKeyframes, keyframes, lighting, objects, reference, settings.durationSeconds, settings.fps, settings.loopPlayback, shots])
   const maxKeyframeFrame = useMemo(() => Math.max(0, ...keyframes.map(key => key.frame), ...Object.values(characterKeyframes).flatMap(track => (track || []).map(key => key.frame))), [characterKeyframes, keyframes])
   const selectedKeyframeInfo = useMemo(() => {
     if (!selectedKeyframe) return null
@@ -1079,12 +1166,13 @@ export default function App() {
     settings,
     objects,
     camera,
+    lighting,
     reference,
     keyframes,
     objectKeyframes: characterKeyframes,
     shots,
     activeShotId,
-  }), [settings, objects, camera, reference, keyframes, characterKeyframes, shots, activeShotId])
+  }), [settings, objects, camera, lighting, reference, keyframes, characterKeyframes, shots, activeShotId])
 
   useEffect(() => {
     currentFrameRef.current = currentFrame
@@ -1156,6 +1244,7 @@ export default function App() {
     setActiveShotId(normalized.activeShotId)
     setObjects(normalized.objects)
     setCamera(normalized.camera)
+    setLighting(normalized.lighting)
     setReference(normalized.reference)
     setKeyframes(normalized.keyframes)
     setCharacterKeyframes(normalized.objectKeyframes)
@@ -1346,6 +1435,7 @@ export default function App() {
     loopPlayback: settings.loopPlayback,
     objects,
     camera,
+    lighting,
     reference,
     keyframes,
     objectKeyframes: characterKeyframes,
@@ -1359,6 +1449,7 @@ export default function App() {
     setSettings(current => ({ ...current, fps: shot.fps, durationSeconds: shot.durationSeconds, loopPlayback: shot.loopPlayback }))
     setObjects(cloneProjectValue(shot.objects))
     setCamera(cloneProjectValue(shot.camera))
+    setLighting(normalizeLighting(shot.lighting))
     setReference(normalizeReference(shot.reference))
     setKeyframes(cloneProjectValue(shot.keyframes || []))
     setCharacterKeyframes(cloneProjectValue(shot.objectKeyframes || {}))
@@ -1391,6 +1482,7 @@ export default function App() {
       loopPlayback: settings.loopPlayback,
       objects: cloneProjectValue(objects),
       camera: cloneProjectValue(camera),
+      lighting: cloneProjectValue(lighting),
       reference: cloneProjectValue(DEFAULT_REFERENCE),
       keyframes: [],
       objectKeyframes: {},
@@ -1638,7 +1730,7 @@ export default function App() {
     else if (activeObject?.id === selectedKeyframeInfo.trackId) deleteObjectKeyframe(selectedKeyframeInfo.frame)
   }
   const saveProject = ({ download = false } = {}) => {
-    const data = projectData({ settings, objects, camera, reference, keyframes, objectKeyframes: characterKeyframes, shots, activeShotId })
+    const data = projectData({ settings, objects, camera, lighting, reference, keyframes, objectKeyframes: characterKeyframes, shots, activeShotId })
     const serialized = JSON.stringify(data)
     let cached = true
     try { localStorage.setItem(PROJECT_STORAGE_KEY, serialized) } catch { cached = false }
@@ -1786,6 +1878,7 @@ export default function App() {
         setActiveShotId(loaded.activeShotId)
         setObjects(loaded.objects)
         setCamera(loaded.camera)
+        setLighting(loaded.lighting)
         setReference(loaded.reference)
         setKeyframes(loaded.keyframes)
         setCharacterKeyframes(loaded.objectKeyframes)
@@ -1806,10 +1899,11 @@ export default function App() {
     const resetObjects = cloneProjectValue(initialObjects)
     const resetCamera = cloneProjectValue(initialCamera)
     setSettings({ ...DEFAULT_PROJECT_SETTINGS })
-    setShots([{ id: 'shot-01', name: '镜头 01', thumbnail: '', fps: 24, durationSeconds: 5, loopPlayback: false, objects: resetObjects, camera: resetCamera, reference: cloneProjectValue(DEFAULT_REFERENCE), keyframes: [], objectKeyframes: {} }])
+    setShots([{ id: 'shot-01', name: '镜头 01', thumbnail: '', fps: 24, durationSeconds: 5, loopPlayback: false, objects: resetObjects, camera: resetCamera, lighting: cloneProjectValue(DEFAULT_LIGHTING), reference: cloneProjectValue(DEFAULT_REFERENCE), keyframes: [], objectKeyframes: {} }])
     setActiveShotId('shot-01')
     setObjects(resetObjects)
     setCamera(resetCamera)
+    setLighting(cloneProjectValue(DEFAULT_LIGHTING))
     setReference(cloneProjectValue(DEFAULT_REFERENCE))
     setKeyframes(initialKeyframes)
     setCharacterKeyframes(initialCharacterKeyframes)
@@ -1865,14 +1959,16 @@ export default function App() {
           </div>
           <div className="viewport-view-options floating-panel">
             <button className={showGrid ? 'is-active' : ''} onClick={() => setShowGrid(value => !value)}><Grid3X3 size={14} /> 网格</button>
+            <button className={lightingPanelOpen ? 'is-active' : ''} onClick={() => setLightingPanelOpen(value => !value)} title="调整当前镜头的环境光和主光"><Sun size={14} /> 光照</button>
             <button className={!cameraView ? 'is-active' : ''} onClick={openEditorView} title="使用固定的编辑观察相机自由布置场景"><RotateCw size={14} /> 编辑视角</button>
             <button className={cameraView ? 'is-active' : ''} onClick={openCameraView} title="切换到场景中主摄像机的实际画面"><Camera size={14} /> 摄像机视角</button>
             <button><span className="solid-sphere" /> 实体</button>
           </div>
+          {lightingPanelOpen && <LightingPanel lighting={lighting} onChange={setLighting} onClose={() => setLightingPanelOpen(false)} />}
           <div className="viewport-label"><strong>{cameraView ? '摄像机视角' : '编辑视角'}</strong><span>{cameraView ? `${displayCamera.aspectRatio || '16:9'} · 正在查看场景中的主摄像机` : '固定观察相机 · 可查看并调整场景中的主摄像机'}</span></div>
           <ReferenceOverlay reference={reference} onChange={setReference} onToast={setToast} cameraMode={cameraView} cameraAspect={previewAspect}>
             <div className="viewport-canvas-layer">
-              <MainViewport key={cameraView ? 'shot-view' : 'scene-view'} cameraView={cameraView} editorCameraData={editorView} onEditorCameraChange={captureEditorView} objects={animatedObjects} animationTime={currentFrame / fps} selectedId={selectedId} activeJoint={selectedJoint} onSelect={setSelectedId} onJointSelect={(objectId, jointId) => { setSelectedId(objectId); setSelectedJoint(jointId) }} transformMode={transformMode} onUpdateObject={updateObjectById} cameraData={displayCamera} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} showGrid={cameraView ? false : showGrid} focusRequest={viewFocusRequest} referenceVisible={Boolean(reference.image && (cameraView ? reference.includeInExport : reference.visible))} />
+              <MainViewport key={cameraView ? 'shot-view' : 'scene-view'} cameraView={cameraView} editorCameraData={editorView} onEditorCameraChange={captureEditorView} objects={animatedObjects} animationTime={currentFrame / fps} selectedId={selectedId} activeJoint={selectedJoint} onSelect={setSelectedId} onJointSelect={(objectId, jointId) => { setSelectedId(objectId); setSelectedJoint(jointId) }} transformMode={transformMode} onUpdateObject={updateObjectById} cameraData={displayCamera} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} lighting={lighting} showGrid={cameraView ? false : showGrid} focusRequest={viewFocusRequest} referenceVisible={Boolean(reference.image && (cameraView ? reference.includeInExport : reference.visible))} />
             </div>
           </ReferenceOverlay>
           <div className="navigation-hint"><span><MousePointer2 size={12} /> 点击物体选择</span>{cameraView ? <><span>主摄像机画面</span><span>与 PNG / MP4 导出一致</span></> : <><span>空白处左键旋转</span><span>右键平移</span><span>滚轮缩放</span></>}</div>
@@ -1880,7 +1976,7 @@ export default function App() {
             <div className="monitor-head"><div><Video size={13} /><strong>主摄像机 01</strong><span>CAMERA VIEW</span></div><div className="monitor-head-actions"><button title="选择场景中的主摄像机" onClick={() => setSelectedId(CAMERA_ID)}><Camera size={12} /></button><button title="切换到摄像机视角" onClick={openCameraView}><ZoomIn size={13} /></button></div></div>
             <div className="monitor-frame">
               <div className={`monitor-canvas ${previewAspectClass}`} style={{ '--preview-aspect': previewAspect }}>
-                <CameraPreview objects={animatedObjects} animationTime={currentFrame / fps} cameraData={displayCamera} backgroundCanvas={monitorReferenceBackground} onCanvasReady={canvas => { monitorCanvasRef.current = canvas }} />
+                <CameraPreview objects={animatedObjects} animationTime={currentFrame / fps} cameraData={displayCamera} lighting={lighting} backgroundCanvas={monitorReferenceBackground} onCanvasReady={canvas => { monitorCanvasRef.current = canvas }} />
                 <span className="safe-frame" />
                 <span className="owner-watermark" aria-label="MONOFORM 品牌标识"><i><img src={BRAND_MARK_URL} alt="" /></i><b>MONOFORM</b></span>
                 <span className="monitor-timecode">{timecodeAtFrame(currentFrame, fps)}</span>
@@ -1915,13 +2011,13 @@ export default function App() {
       </div>
       {capturingImage && (
         <div className="export-render-surface" style={{ width: exportDimensions.width, height: exportDimensions.height }} aria-hidden="true">
-          <CameraPreview objects={animatedObjects} animationTime={currentFrame / fps} cameraData={displayCamera} exportMode backgroundCanvas={exportReferenceBackground} onCanvasReady={canvas => { imageCaptureCanvasRef.current = canvas }} />
+          <CameraPreview objects={animatedObjects} animationTime={currentFrame / fps} cameraData={displayCamera} lighting={lighting} exportMode backgroundCanvas={exportReferenceBackground} onCanvasReady={canvas => { imageCaptureCanvasRef.current = canvas }} />
         </div>
       )}
       {exporting && (
         <>
           <div className="export-render-surface" style={{ width: exportDimensions.width, height: exportDimensions.height }} aria-hidden="true">
-            <CameraPreview objects={animatedObjects} animationTime={currentFrame / fps} cameraData={displayCamera} exportMode backgroundCanvas={exportReferenceBackground} onCanvasReady={canvas => { exportCanvasRef.current = canvas }} />
+            <CameraPreview objects={animatedObjects} animationTime={currentFrame / fps} cameraData={displayCamera} lighting={lighting} exportMode backgroundCanvas={exportReferenceBackground} onCanvasReady={canvas => { exportCanvasRef.current = canvas }} />
           </div>
           <div className="export-progress-overlay" role="status" aria-live="polite">
             <div className="export-progress-card">
