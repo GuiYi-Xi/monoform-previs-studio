@@ -944,7 +944,7 @@ function ReferenceOverlay({ reference, onChange, onToast, cameraMode = false, ca
     event.currentTarget.releasePointerCapture?.(event.pointerId)
   }
   const hasImage = Boolean(reference.image)
-  const referenceLayer = hasImage && reference.visible ? (
+  const referenceLayer = hasImage && (cameraMode ? reference.includeInExport : reference.visible) ? (
     <div className={`reference-layer ${editing ? 'is-editing' : ''}`} aria-label={`参考图 ${reference.name}`}>
       <img
         src={reference.image}
@@ -1019,9 +1019,11 @@ export default function App() {
   const [exporting, setExporting] = useState(false)
   const [capturingImage, setCapturingImage] = useState(false)
   const [exportReferenceBackground, setExportReferenceBackground] = useState(null)
+  const [monitorReferenceBackground, setMonitorReferenceBackground] = useState(null)
   const [exportProgress, setExportProgress] = useState(0)
   const [showGrid, setShowGrid] = useState(true)
   const [cameraView, setCameraView] = useState(false)
+  const [editorView, setEditorView] = useState({ position: [8.5, 6.4, 9.5], target: [0, 1, 0] })
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [viewFocusRequest, setViewFocusRequest] = useState(null)
   const [toast, setToast] = useState('')
@@ -1033,6 +1035,7 @@ export default function App() {
   const exportCanvasRef = useRef(null)
   const imageCaptureCanvasRef = useRef(null)
   const monitorCanvasRef = useRef(null)
+  const editorViewRef = useRef(editorView)
   const exportLockRef = useRef(false)
   const historyRef = useRef({ past: [], future: [], last: '', timer: null, restoring: false })
   const latestProjectRef = useRef(null)
@@ -1087,6 +1090,18 @@ export default function App() {
   useEffect(() => {
     currentFrameRef.current = currentFrame
   }, [currentFrame])
+
+  useEffect(() => {
+    let active = true
+    if (!reference.image || !reference.includeInExport) {
+      setMonitorReferenceBackground(null)
+      return () => { active = false }
+    }
+    referenceCanvasForExport(reference, exportDimensions.width, exportDimensions.height)
+      .then(canvas => { if (active) setMonitorReferenceBackground(canvas) })
+      .catch(() => { if (active) setMonitorReferenceBackground(null) })
+    return () => { active = false }
+  }, [exportDimensions.height, exportDimensions.width, reference])
 
   useEffect(() => {
     try { localStorage.setItem(CUSTOM_POSE_STORAGE_KEY, JSON.stringify(customPoses)) } catch { /* 姿势库写入失败时不影响工程编辑 */ }
@@ -1473,6 +1488,32 @@ export default function App() {
     setObjects(list => list.map(object => object.id === id ? { ...object, ...patch } : object))
   }
   const updateSelected = patch => updateObjectById(selectedId, patch)
+  const captureEditorView = useCallback(view => {
+    if (view?.position?.length === 3 && view?.rotation?.length === 3 && view?.target?.length === 3) editorViewRef.current = view
+  }, [])
+  const openShotView = () => {
+    setEditorView(cloneProjectValue(editorViewRef.current))
+    setCameraView(true)
+  }
+  const openSceneView = () => setCameraView(false)
+  const setSceneViewAsShotCamera = () => {
+    const view = editorViewRef.current
+    if (!view?.position?.length || !view?.rotation?.length) {
+      setToast('场景视角尚未准备好，请先在场景中旋转一次视角')
+      return
+    }
+    const nextCamera = { ...camera, position: [...view.position], rotation: [...view.rotation] }
+    setCamera(nextCamera)
+    if (keyframes.length) {
+      const existing = keyframes.find(key => key.frame === currentFrame)
+      const nextKey = { frame: currentFrame, interpolation: normalizeInterpolation(existing?.interpolation), position: [...view.position], rotation: [...view.rotation], focalLength: camera.focalLength }
+      setKeyframes(list => [...list.filter(key => key.frame !== currentFrame), nextKey].sort((left, right) => left.frame - right.frame))
+      setSelectedKeyframe({ kind: 'camera', frame: currentFrame, trackId: null })
+      setToast(`当前场景视角已设为成片摄像机 · 已更新第 ${Math.round(currentFrame)} 帧镜头关键帧`)
+    } else setToast('当前场景视角已设为成片摄像机')
+    setSelectedId(CAMERA_ID)
+    openShotView()
+  }
   const saveCustomPose = person => {
     if (!person || person.type !== 'person') return
     const suggestedName = `自定义姿势 ${customPoses.length + 1}`
@@ -1850,22 +1891,23 @@ export default function App() {
           </div>
           <div className="viewport-view-options floating-panel">
             <button className={showGrid ? 'is-active' : ''} onClick={() => setShowGrid(value => !value)}><Grid3X3 size={14} /> 网格</button>
-            <button className={!cameraView ? 'is-active' : ''} onClick={() => setCameraView(false)} title="自由旋转和缩放观察场景"><RotateCw size={14} /> 自由视图</button>
-            <button className={cameraView ? 'is-active' : ''} onClick={() => setCameraView(true)} title="使用最终摄像机画幅摆放参考图和模型"><ScanLine size={14} /> 镜头对齐</button>
+            <button className={!cameraView ? 'is-active' : ''} onClick={openSceneView} title="使用独立观察相机自由布置场景"><RotateCw size={14} /> 场景视角</button>
+            <button className={cameraView ? 'is-active' : ''} onClick={openShotView} title="查看与 PNG / MP4 完全相同的成片画面"><ScanLine size={14} /> 成片视角</button>
+            {!cameraView && <button className="set-shot-camera-button" onClick={setSceneViewAsShotCamera} title="让成片摄像机采用当前场景观察角度"><Camera size={14} /> 当前视角设为成片</button>}
             <button><span className="solid-sphere" /> 实体</button>
           </div>
-          <div className="viewport-label"><strong>{cameraView ? '镜头对齐视图' : '自由视图'}</strong><span>{cameraView ? `${displayCamera.aspectRatio || '16:9'} · 与 PNG / MP4 构图一致` : '空白处左键拖动可自由旋转'}</span></div>
+          <div className="viewport-label"><strong>{cameraView ? '成片视角' : '场景视角'}</strong><span>{cameraView ? `${displayCamera.aspectRatio || '16:9'} · 与固定监看器及 PNG / MP4 一致` : '独立观察相机 · 不会改变成片摄像机'}</span></div>
           <ReferenceOverlay reference={reference} onChange={setReference} onToast={setToast} cameraMode={cameraView} cameraAspect={previewAspect}>
             <div className="viewport-canvas-layer">
-              <MainViewport cameraView={cameraView} objects={animatedObjects} animationTime={currentFrame / fps} selectedId={selectedId} activeJoint={selectedJoint} onSelect={setSelectedId} onJointSelect={(objectId, jointId) => { setSelectedId(objectId); setSelectedJoint(jointId) }} transformMode={transformMode} onUpdateObject={updateObjectById} cameraData={displayCamera} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} showGrid={showGrid} focusRequest={viewFocusRequest} referenceVisible={Boolean(reference.image && reference.visible)} />
+              <MainViewport key={cameraView ? 'shot-view' : 'scene-view'} cameraView={cameraView} editorCameraData={editorView} onEditorCameraChange={captureEditorView} objects={animatedObjects} animationTime={currentFrame / fps} selectedId={selectedId} activeJoint={selectedJoint} onSelect={setSelectedId} onJointSelect={(objectId, jointId) => { setSelectedId(objectId); setSelectedJoint(jointId) }} transformMode={transformMode} onUpdateObject={updateObjectById} cameraData={displayCamera} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} showGrid={cameraView ? false : showGrid} focusRequest={viewFocusRequest} referenceVisible={Boolean(reference.image && (cameraView ? reference.includeInExport : reference.visible))} />
             </div>
           </ReferenceOverlay>
-          <div className="navigation-hint"><span><MousePointer2 size={12} /> 点击物体选择</span>{cameraView ? <span>镜头画面与导出一致</span> : <><span>空白处左键旋转</span><span>右键平移</span><span>滚轮缩放</span></>}</div>
+          <div className="navigation-hint"><span><MousePointer2 size={12} /> 点击物体选择</span>{cameraView ? <><span>固定成片摄像机</span><span>画面与导出一致</span></> : <><span>空白处左键旋转</span><span>右键平移</span><span>滚轮缩放</span></>}</div>
           <div className="camera-monitor">
-            <div className="monitor-head"><div><Video size={13} /><strong>摄像机 01</strong><span>SHOT PREVIEW</span></div><button onClick={() => setSelectedId(CAMERA_ID)}><ZoomIn size={13} /></button></div>
+            <div className="monitor-head"><div><Video size={13} /><strong>成片摄像机 01</strong><span>FINAL OUTPUT</span></div><div className="monitor-head-actions"><button title="选择成片摄像机" onClick={() => setSelectedId(CAMERA_ID)}><Camera size={12} /></button><button title="放大为成片视角" onClick={openShotView}><ZoomIn size={13} /></button></div></div>
             <div className="monitor-frame">
               <div className={`monitor-canvas ${previewAspectClass}`} style={{ '--preview-aspect': previewAspect }}>
-                <CameraPreview objects={animatedObjects} animationTime={currentFrame / fps} cameraData={displayCamera} onCanvasReady={canvas => { monitorCanvasRef.current = canvas }} />
+                <CameraPreview objects={animatedObjects} animationTime={currentFrame / fps} cameraData={displayCamera} backgroundCanvas={monitorReferenceBackground} onCanvasReady={canvas => { monitorCanvasRef.current = canvas }} />
                 <span className="safe-frame" />
                 <span className="owner-watermark" aria-label="MONOFORM 品牌标识"><i><img src={BRAND_MARK_URL} alt="" /></i><b>MONOFORM</b></span>
                 <span className="monitor-timecode">{timecodeAtFrame(currentFrame, fps)}</span>

@@ -269,6 +269,8 @@ button:disabled { opacity: .28; cursor: not-allowed !important; }
 .viewport-view-options { top: 12px; right: 12px; height: 34px; padding: 3px; }
 .viewport-view-options button { height: 26px; border: 0; background: transparent; color: #bbb9b1; display: flex; align-items: center; gap: 5px; font-size: 9px; padding: 0 7px; border-radius: 4px; cursor: pointer; }
 .viewport-view-options button:hover, .viewport-view-options button.is-active { background: rgba(255,255,255,.1); color: white; }
+.viewport-view-options .set-shot-camera-button { color: #d8bd7c; }
+.viewport-view-options .set-shot-camera-button:hover { background: rgba(214,168,79,.16); color: #f0d69b; }
 .solid-sphere { width: 10px; height: 10px; border-radius: 50%; background: #d4d0c7; box-shadow: inset -3px -3px 4px rgba(0,0,0,.35); }
 .viewport-label { position: absolute; z-index: 4; top: 14px; left: 14px; display: flex; flex-direction: column; gap: 3px; color: #f3f1e9; text-shadow: 0 1px 3px rgba(0,0,0,.3); pointer-events: none; }
 .viewport-label strong { font-size: 10px; }
