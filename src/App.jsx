@@ -598,7 +598,7 @@ function LeftSidebar({ objects, selectedId, onSelect, onAddPerson, onAddPrimitiv
   )
 }
 
-function Inspector({ selected, camera, selectedJoint, customPoses, onSelectJoint, onUpdateObject, onUpdateCamera, onDelete, onDuplicate, onFocus, onAimCamera, onToggleLock, onSaveCustomPose, onApplyCustomPose, onDeleteCustomPose }) {
+function Inspector({ selected, camera, selectedJoint, customPoses, onSelectJoint, onUpdateObject, onUpdateCamera, onDelete, onDuplicate, onFocus, onToggleLock, onSaveCustomPose, onApplyCustomPose, onDeleteCustomPose }) {
   if (!selected) {
     return <aside className="right-sidebar panel empty-inspector"><MousePointer2 size={24} /><span>选择场景中的物体</span></aside>
   }
@@ -624,7 +624,6 @@ function Inspector({ selected, camera, selectedJoint, customPoses, onSelectJoint
         <div><small>{isCamera ? 'CAMERA' : typeLabel}</small>{isCamera ? <strong>主摄像机</strong> : <input className="inspector-name-input" value={selected.name} onChange={event => onUpdateObject({ name: event.target.value })} aria-label="物体名称" />}</div>
         <div className="inspector-head-actions">
           <ToolButton icon={Focus} label="视图聚焦" onClick={onFocus} />
-          {!isCamera && <ToolButton icon={Camera} label="摄像机对准" onClick={onAimCamera} />}
           {!isCamera && <ToolButton icon={selected.locked ? Unlock : Lock} label={selected.locked ? '解除锁定' : '锁定'} onClick={onToggleLock} />}
           {!isCamera && <ToolButton icon={Copy} label="复制" onClick={onDuplicate} />}
           {!isCamera && <ToolButton icon={Trash2} label="删除" onClick={onDelete} />}
@@ -917,7 +916,7 @@ function ReferenceOverlay({ reference, onChange, onToast, cameraMode = false, ca
       onChange(normalizeReference({ ...DEFAULT_REFERENCE, image, name: file.name }))
       setEditing(false)
       setExpanded(true)
-      onToast(`参考图“${file.name}”已加入 · 精确对应导出时请切换“镜头对齐”`)
+      onToast(`参考图“${file.name}”已加入 · 可切换到“摄像机视角”核对导出构图`)
     } catch (error) {
       onToast(error.message || '参考图上传失败')
     }
@@ -1224,13 +1223,6 @@ export default function App() {
     })
   }, [animatedObjects, displayCamera.position, selectedId])
 
-  const aimCameraAtSelected = useCallback(() => {
-    if (!inspectorSelected || inspectorSelected.id === CAMERA_ID) return
-    const target = visualCenterForObject(inspectorSelected)
-    setCamera(current => ({ ...current, rotation: cameraRotationToward(current.position, target) }))
-    setToast(`摄像机已对准“${inspectorSelected.name}”当前帧位置`)
-  }, [inspectorSelected])
-
   const seekToFrame = useCallback(frame => {
     const nextFrame = clamp(Math.round(frame), 0, totalFrames)
     setPlaying(false)
@@ -1491,29 +1483,11 @@ export default function App() {
   const captureEditorView = useCallback(view => {
     if (view?.position?.length === 3 && view?.rotation?.length === 3 && view?.target?.length === 3) editorViewRef.current = view
   }, [])
-  const openShotView = () => {
+  const openCameraView = () => {
     setEditorView(cloneProjectValue(editorViewRef.current))
     setCameraView(true)
   }
-  const openSceneView = () => setCameraView(false)
-  const setSceneViewAsShotCamera = () => {
-    const view = editorViewRef.current
-    if (!view?.position?.length || !view?.rotation?.length) {
-      setToast('场景视角尚未准备好，请先在场景中旋转一次视角')
-      return
-    }
-    const nextCamera = { ...camera, position: [...view.position], rotation: [...view.rotation] }
-    setCamera(nextCamera)
-    if (keyframes.length) {
-      const existing = keyframes.find(key => key.frame === currentFrame)
-      const nextKey = { frame: currentFrame, interpolation: normalizeInterpolation(existing?.interpolation), position: [...view.position], rotation: [...view.rotation], focalLength: camera.focalLength }
-      setKeyframes(list => [...list.filter(key => key.frame !== currentFrame), nextKey].sort((left, right) => left.frame - right.frame))
-      setSelectedKeyframe({ kind: 'camera', frame: currentFrame, trackId: null })
-      setToast(`当前场景视角已设为成片摄像机 · 已更新第 ${Math.round(currentFrame)} 帧镜头关键帧`)
-    } else setToast('当前场景视角已设为成片摄像机')
-    setSelectedId(CAMERA_ID)
-    openShotView()
-  }
+  const openEditorView = () => setCameraView(false)
   const saveCustomPose = person => {
     if (!person || person.type !== 'person') return
     const suggestedName = `自定义姿势 ${customPoses.length + 1}`
@@ -1891,20 +1865,19 @@ export default function App() {
           </div>
           <div className="viewport-view-options floating-panel">
             <button className={showGrid ? 'is-active' : ''} onClick={() => setShowGrid(value => !value)}><Grid3X3 size={14} /> 网格</button>
-            <button className={!cameraView ? 'is-active' : ''} onClick={openSceneView} title="使用独立观察相机自由布置场景"><RotateCw size={14} /> 场景视角</button>
-            <button className={cameraView ? 'is-active' : ''} onClick={openShotView} title="查看与 PNG / MP4 完全相同的成片画面"><ScanLine size={14} /> 成片视角</button>
-            {!cameraView && <button className="set-shot-camera-button" onClick={setSceneViewAsShotCamera} title="让成片摄像机采用当前场景观察角度"><Camera size={14} /> 当前视角设为成片</button>}
+            <button className={!cameraView ? 'is-active' : ''} onClick={openEditorView} title="使用固定的编辑观察相机自由布置场景"><RotateCw size={14} /> 编辑视角</button>
+            <button className={cameraView ? 'is-active' : ''} onClick={openCameraView} title="切换到场景中主摄像机的实际画面"><Camera size={14} /> 摄像机视角</button>
             <button><span className="solid-sphere" /> 实体</button>
           </div>
-          <div className="viewport-label"><strong>{cameraView ? '成片视角' : '场景视角'}</strong><span>{cameraView ? `${displayCamera.aspectRatio || '16:9'} · 与固定监看器及 PNG / MP4 一致` : '独立观察相机 · 不会改变成片摄像机'}</span></div>
+          <div className="viewport-label"><strong>{cameraView ? '摄像机视角' : '编辑视角'}</strong><span>{cameraView ? `${displayCamera.aspectRatio || '16:9'} · 正在查看场景中的主摄像机` : '固定观察相机 · 可查看并调整场景中的主摄像机'}</span></div>
           <ReferenceOverlay reference={reference} onChange={setReference} onToast={setToast} cameraMode={cameraView} cameraAspect={previewAspect}>
             <div className="viewport-canvas-layer">
               <MainViewport key={cameraView ? 'shot-view' : 'scene-view'} cameraView={cameraView} editorCameraData={editorView} onEditorCameraChange={captureEditorView} objects={animatedObjects} animationTime={currentFrame / fps} selectedId={selectedId} activeJoint={selectedJoint} onSelect={setSelectedId} onJointSelect={(objectId, jointId) => { setSelectedId(objectId); setSelectedJoint(jointId) }} transformMode={transformMode} onUpdateObject={updateObjectById} cameraData={displayCamera} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} showGrid={cameraView ? false : showGrid} focusRequest={viewFocusRequest} referenceVisible={Boolean(reference.image && (cameraView ? reference.includeInExport : reference.visible))} />
             </div>
           </ReferenceOverlay>
-          <div className="navigation-hint"><span><MousePointer2 size={12} /> 点击物体选择</span>{cameraView ? <><span>固定成片摄像机</span><span>画面与导出一致</span></> : <><span>空白处左键旋转</span><span>右键平移</span><span>滚轮缩放</span></>}</div>
+          <div className="navigation-hint"><span><MousePointer2 size={12} /> 点击物体选择</span>{cameraView ? <><span>主摄像机画面</span><span>与 PNG / MP4 导出一致</span></> : <><span>空白处左键旋转</span><span>右键平移</span><span>滚轮缩放</span></>}</div>
           <div className="camera-monitor">
-            <div className="monitor-head"><div><Video size={13} /><strong>成片摄像机 01</strong><span>FINAL OUTPUT</span></div><div className="monitor-head-actions"><button title="选择成片摄像机" onClick={() => setSelectedId(CAMERA_ID)}><Camera size={12} /></button><button title="放大为成片视角" onClick={openShotView}><ZoomIn size={13} /></button></div></div>
+            <div className="monitor-head"><div><Video size={13} /><strong>主摄像机 01</strong><span>CAMERA VIEW</span></div><div className="monitor-head-actions"><button title="选择场景中的主摄像机" onClick={() => setSelectedId(CAMERA_ID)}><Camera size={12} /></button><button title="切换到摄像机视角" onClick={openCameraView}><ZoomIn size={13} /></button></div></div>
             <div className="monitor-frame">
               <div className={`monitor-canvas ${previewAspectClass}`} style={{ '--preview-aspect': previewAspect }}>
                 <CameraPreview objects={animatedObjects} animationTime={currentFrame / fps} cameraData={displayCamera} backgroundCanvas={monitorReferenceBackground} onCanvasReady={canvas => { monitorCanvasRef.current = canvas }} />
@@ -1916,7 +1889,7 @@ export default function App() {
             </div>
           </div>
         </section>
-        <Inspector selected={inspectorSelected} camera={camera} selectedJoint={selectedJoint} customPoses={customPoses} onSelectJoint={setSelectedJoint} onUpdateObject={updateSelected} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} onDelete={deleteSelected} onDuplicate={duplicateSelected} onFocus={focusSelected} onAimCamera={aimCameraAtSelected} onToggleLock={() => activeObject && updateSelected({ locked: !activeObject.locked })} onSaveCustomPose={saveCustomPose} onApplyCustomPose={applyCustomPose} onDeleteCustomPose={deleteCustomPose} />
+        <Inspector selected={inspectorSelected} camera={camera} selectedJoint={selectedJoint} customPoses={customPoses} onSelectJoint={setSelectedJoint} onUpdateObject={updateSelected} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} onDelete={deleteSelected} onDuplicate={duplicateSelected} onFocus={focusSelected} onToggleLock={() => activeObject && updateSelected({ locked: !activeObject.locked })} onSaveCustomPose={saveCustomPose} onApplyCustomPose={applyCustomPose} onDeleteCustomPose={deleteCustomPose} />
         <Timeline
           currentFrame={currentFrame}
           fps={fps}
