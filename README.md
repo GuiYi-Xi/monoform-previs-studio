@@ -14,7 +14,7 @@ MONOFORM 是一款面向分镜、构图和镜头预演的轻量三维白模工�
 
 [![点击观看 MONOFORM 录屏教学](docs/screenshots/monoform-video-cover.jpg)](https://guiyi-xi.github.io/monoform-previs-studio/tutorial/monoform-getting-started.mp4)
 
-点击上方封面即可播放录屏教学。视频时长约 4 分 41 秒，包含声音；如果浏览器没有自动播放，可使用下面的链接直接打开或下载。
+点击上方封面即可播放新版录屏教学。视频时长约 8 分 11 秒，包含声音；如果浏览器没有自动播放，可使用下面的链接直接打开或下载。
 
 [播放或下载教学录屏 MP4](https://guiyi-xi.github.io/monoform-previs-studio/tutorial/monoform-getting-started.mp4)
 
