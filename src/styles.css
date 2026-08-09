@@ -168,6 +168,10 @@ button:disabled { opacity: .28; cursor: not-allowed !important; }
 .axis-slider.is-axis-locked .axis-lock-button { border-color: rgba(214,168,79,.5); background: #362f21; color: var(--accent); }
 .axis-slider input:disabled { opacity: .38; cursor: not-allowed; }
 .axis-slider:has(input:disabled) output { color: var(--text-faint); opacity: .55; }
+.transform-quick-actions { margin-top: 10px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.transform-quick-actions button { min-width: 0; height: 27px; padding: 0 4px; display: flex; align-items: center; justify-content: center; gap: 4px; border: 1px solid #3b3b37; border-radius: 4px; background: #252523; color: var(--text-faint); font-size: 7px; cursor: pointer; white-space: nowrap; }
+.transform-quick-actions button:hover:not(:disabled) { border-color: #68604e; background: #302e28; color: var(--accent); }
+.transform-quick-actions button:disabled { opacity: .3; cursor: not-allowed; }
 .range-field { display: grid; grid-template-columns: 39px 1fr 47px; align-items: center; gap: 6px; font-size: 9px; color: var(--text-faint); }
 .range-field input { accent-color: var(--accent); min-width: 0; height: 3px; }
 .range-field output { text-align: right; color: var(--text-dim); font-family: "Cascadia Mono", monospace; }

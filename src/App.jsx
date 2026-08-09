@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Box, BoxSelect, Camera, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleDot, Copy, Download,
+  ArrowDownToLine, Axis3D, Box, BoxSelect, Camera, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleDot, Copy, Download,
   FileImage, FileVideo2, Focus, FolderOpen, Grid3X3, Import, Link2, Lock, MousePointer2, Move3D, Pause, Play, Plus,
-  Maximize2, Minimize2, Minus, Redo2, RotateCw, Save, Settings2, SkipBack, SkipForward, SlidersHorizontal, Sparkles, Sun,
+  Magnet, Maximize2, Minimize2, Minus, Redo2, RotateCcw, RotateCw, Save, Settings2, SkipBack, SkipForward, SlidersHorizontal, Sparkles, Sun,
   ScanLine, Trash2, Undo2, Unlink2, UserRound, Video, ZoomIn,
   Unlock,
 } from 'lucide-react'
@@ -634,7 +634,7 @@ function LeftSidebar({ objects, selectedId, onSelect, onAddPerson, onAddPrimitiv
   )
 }
 
-function Inspector({ selected, camera, selectedJoint, customPoses, onSelectJoint, onUpdateObject, onUpdateCamera, onDelete, onDuplicate, onFocus, onToggleLock, onSaveCustomPose, onApplyCustomPose, onDeleteCustomPose }) {
+function Inspector({ selected, camera, selectedJoint, customPoses, onSelectJoint, onUpdateObject, onUpdateCamera, onDelete, onDuplicate, onFocus, onToggleLock, onGround, onResetRotation, onResetScale, onSaveCustomPose, onApplyCustomPose, onDeleteCustomPose }) {
   if (!selected) {
     return <aside className="right-sidebar panel empty-inspector"><MousePointer2 size={24} /><span>选择场景中的物体</span></aside>
   }
@@ -688,6 +688,11 @@ function Inspector({ selected, camera, selectedJoint, customPoses, onSelectJoint
             onChange={scale => onUpdateObject({ scale })}
             disabled={selected.locked}
           />}
+          {!isCamera && <div className="transform-quick-actions">
+            <button type="button" onClick={onGround} disabled={selected.locked} title="按当前外形将物体最低点贴到世界地面"><ArrowDownToLine size={11} /> 落到地面</button>
+            <button type="button" onClick={onResetRotation} disabled={selected.locked} title="保持位置和缩放，将整体旋转恢复为零"><RotateCcw size={11} /> 旋转归零</button>
+            <button type="button" onClick={onResetScale} disabled={selected.locked} title="保持位置和旋转，将缩放恢复为 1"><BoxSelect size={11} /> 缩放归一</button>
+          </div>}
         </div>
         {isCamera ? (
           <div className="inspector-section">
@@ -1125,6 +1130,9 @@ export default function App() {
   const [selectedId, setSelectedId] = useState(() => startupProject?.objects?.[0]?.id || 'actor-lead')
   const [selectedJoint, setSelectedJoint] = useState('mixamorigSpine2')
   const [transformMode, setTransformMode] = useState('translate')
+  const [transformSpace, setTransformSpace] = useState('world')
+  const [snapEnabled, setSnapEnabled] = useState(true)
+  const [groundRequest, setGroundRequest] = useState(null)
   const [camera, setCamera] = useState(() => ({ ...initialCamera, ...(startupProject?.camera || {}) }))
   const [lighting, setLighting] = useState(() => normalizeLighting(startupProject?.lighting))
   const [reference, setReference] = useState(() => normalizeReference(startupProject?.reference))
@@ -1611,6 +1619,21 @@ export default function App() {
     setObjects(list => list.map(object => object.id === id ? { ...object, ...patch } : object))
   }
   const updateSelected = patch => updateObjectById(selectedId, patch)
+  const groundSelected = () => {
+    if (!activeObject || activeObject.locked) return
+    setGroundRequest({ id: activeObject.id, nonce: Date.now() })
+    setToast('已按模型最低点落到地面')
+  }
+  const resetSelectedRotation = () => {
+    if (!activeObject || activeObject.locked) return
+    updateSelected({ rotation: [0, 0, 0] })
+    setToast('整体旋转已归零')
+  }
+  const resetSelectedScale = () => {
+    if (!activeObject || activeObject.locked) return
+    updateSelected({ scale: [1, 1, 1] })
+    setToast('整体缩放已恢复为 1')
+  }
   const captureEditorView = useCallback(view => {
     if (view?.position?.length === 3 && view?.rotation?.length === 3 && view?.target?.length === 3) editorViewRef.current = view
   }, [])
@@ -2005,12 +2028,15 @@ export default function App() {
             <ToolButton icon={Move3D} label="移动" active={transformMode === 'translate'} onClick={() => setTransformMode('translate')} shortcut="W" />
             <ToolButton icon={RotateCw} label="旋转" active={transformMode === 'rotate'} onClick={() => setTransformMode('rotate')} shortcut="E" />
             <ToolButton icon={BoxSelect} label="缩放" active={transformMode === 'scale'} onClick={() => setTransformMode('scale')} shortcut="R" />
+            <span />
+            <ToolButton icon={Axis3D} label={transformSpace === 'world' ? '世界坐标' : '局部坐标'} active={transformSpace === 'local'} disabled={transformMode === 'select'} onClick={() => setTransformSpace(space => space === 'world' ? 'local' : 'world')} />
+            <ToolButton icon={Magnet} label={snapEnabled ? '关闭吸附' : '开启吸附'} active={snapEnabled} disabled={transformMode === 'select'} onClick={() => setSnapEnabled(value => !value)} />
           </div>
           <div className="viewport-mode-help">
             {transformMode === 'select' && 'Q 选择 / 人物摆姿 · 重叠处优先当前对象 · Alt 选择前层'}
-            {transformMode === 'translate' && 'W 整体移动 · 当前选择已锁定 · 拖动红 / 绿 / 蓝坐标轴'}
-            {transformMode === 'rotate' && (selectedId === CAMERA_ID ? 'E 摄像机旋转 · 当前选择已锁定 · 拖动红 / 绿 / 蓝圆环' : 'E 整体旋转 · 当前选择已锁定 · 左右水平 / 上下纵向 / Shift 翻滚')}
-            {transformMode === 'scale' && 'R 整体缩放 · 当前选择已锁定 · 拖动坐标轴或中心块'}
+            {transformMode === 'translate' && `W 整体移动 · ${transformSpace === 'world' ? '世界坐标' : '局部坐标'} · ${snapEnabled ? '0.1 格吸附' : '自由移动'}`}
+            {transformMode === 'rotate' && `${selectedId === CAMERA_ID ? 'E 摄像机旋转' : 'E 整体旋转'} · ${transformSpace === 'world' ? '世界坐标' : '局部坐标'} · ${snapEnabled ? '5° 吸附' : '自由旋转'}`}
+            {transformMode === 'scale' && `R 整体缩放 · ${transformSpace === 'world' ? '世界坐标' : '局部坐标'} · ${snapEnabled ? '0.1 吸附' : '自由缩放'}`}
           </div>
           <div className={`viewport-view-options floating-panel ${viewOptionsCollapsed ? 'is-collapsed' : ''}`}>
             {viewOptionsCollapsed ? (
@@ -2032,7 +2058,7 @@ export default function App() {
           <div className="viewport-label"><strong>{cameraView ? '摄像机视角' : '编辑视角'}</strong><span>{cameraView ? `${displayCamera.aspectRatio || '16:9'} · 正在查看场景中的主摄像机` : '固定观察相机 · 可查看并调整场景中的主摄像机'}</span></div>
           <ReferenceOverlay reference={reference} onChange={setReference} onToast={setToast} cameraMode={cameraView} cameraAspect={previewAspect}>
             <div className="viewport-canvas-layer">
-              <MainViewport key={cameraView ? 'shot-view' : 'scene-view'} cameraView={cameraView} editorCameraData={editorView} onEditorCameraChange={captureEditorView} objects={animatedObjects} animationTime={currentFrame / fps} selectedId={selectedId} activeJoint={selectedJoint} onSelect={setSelectedId} onJointSelect={(objectId, jointId) => { setSelectedId(objectId); setSelectedJoint(jointId) }} transformMode={transformMode} onUpdateObject={updateObjectById} cameraData={displayCamera} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} lighting={lighting} showGrid={showGrid} focusRequest={viewFocusRequest} referenceVisible={Boolean(reference.image && (cameraView ? reference.includeInExport : reference.visible))} />
+              <MainViewport key={cameraView ? 'shot-view' : 'scene-view'} cameraView={cameraView} editorCameraData={editorView} onEditorCameraChange={captureEditorView} objects={animatedObjects} animationTime={currentFrame / fps} selectedId={selectedId} activeJoint={selectedJoint} onSelect={setSelectedId} onJointSelect={(objectId, jointId) => { setSelectedId(objectId); setSelectedJoint(jointId) }} transformMode={transformMode} transformSpace={transformSpace} snapEnabled={snapEnabled} groundRequest={groundRequest} onUpdateObject={updateObjectById} cameraData={displayCamera} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} lighting={lighting} showGrid={showGrid} focusRequest={viewFocusRequest} referenceVisible={Boolean(reference.image && (cameraView ? reference.includeInExport : reference.visible))} />
             </div>
           </ReferenceOverlay>
           <div className="navigation-hint"><span><MousePointer2 size={12} /> 点击物体选择</span>{cameraView ? <><span>主摄像机画面</span><span>网格仅辅助 · 不进入导出</span></> : <><span>空白处左键旋转</span><span>右键平移</span><span>滚轮缩放</span></>}</div>
@@ -2056,7 +2082,7 @@ export default function App() {
             </div>}
           </div>
         </section>
-        <Inspector selected={inspectorSelected} camera={camera} selectedJoint={selectedJoint} customPoses={customPoses} onSelectJoint={setSelectedJoint} onUpdateObject={updateSelected} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} onDelete={deleteSelected} onDuplicate={duplicateSelected} onFocus={focusSelected} onToggleLock={() => activeObject && updateSelected({ locked: !activeObject.locked })} onSaveCustomPose={saveCustomPose} onApplyCustomPose={applyCustomPose} onDeleteCustomPose={deleteCustomPose} />
+        <Inspector selected={inspectorSelected} camera={camera} selectedJoint={selectedJoint} customPoses={customPoses} onSelectJoint={setSelectedJoint} onUpdateObject={updateSelected} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} onDelete={deleteSelected} onDuplicate={duplicateSelected} onFocus={focusSelected} onToggleLock={() => activeObject && updateSelected({ locked: !activeObject.locked })} onGround={groundSelected} onResetRotation={resetSelectedRotation} onResetScale={resetSelectedScale} onSaveCustomPose={saveCustomPose} onApplyCustomPose={applyCustomPose} onDeleteCustomPose={deleteCustomPose} />
         <Timeline
           currentFrame={currentFrame}
           fps={fps}

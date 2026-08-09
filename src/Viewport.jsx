@@ -927,13 +927,26 @@ function shouldKeepCurrentSelection(event, selectedId, selected, transformMode) 
   return event.intersections?.some(intersection => sceneObjectIdFromIntersection(intersection) === selectedId)
 }
 
-function SceneObject({ data, selected, selectedId, activeJoint, transformMode, onSelect, onUpdate, onJointSelect, animationTime = 0, preview = false }) {
+function SceneObject({ data, selected, selectedId, activeJoint, transformMode, transformSpace = 'world', snapEnabled = true, groundRequest, onSelect, onUpdate, onJointSelect, animationTime = 0, preview = false }) {
   const groupRef = useRef(null)
   const objectRotateDrag = useRef(null)
   const scaleTransformStart = useRef(null)
+  const appliedGroundRequest = useRef(null)
   const orbitControls = useThree(state => state.controls)
   const scaleAxisLocks = Array.isArray(data.scaleAxisLocks) ? data.scaleAxisLocks : [false, false, false]
   const stateAnimationTime = Math.max(0, animationTime - (Number.isFinite(data.motionStartTime) ? data.motionStartTime : 0))
+  useEffect(() => {
+    if (!groundRequest || groundRequest.id !== data.id || !groupRef.current || data.locked || preview) return
+    const requestKey = `${groundRequest.id}:${groundRequest.nonce}`
+    if (appliedGroundRequest.current === requestKey) return
+    const object = groupRef.current
+    object.updateWorldMatrix(true, true)
+    const bounds = new THREE.Box3().setFromObject(object)
+    if (!Number.isFinite(bounds.min.y)) return
+    appliedGroundRequest.current = requestKey
+    object.position.y -= bounds.min.y
+    onUpdate(data.id, { position: object.position.toArray() })
+  }, [data.id, data.locked, groundRequest?.id, groundRequest?.nonce, onUpdate, preview])
   const syncTransform = useCallback(() => {
     const object = groupRef.current
     if (!object) return
@@ -1058,13 +1071,14 @@ function SceneObject({ data, selected, selectedId, activeJoint, transformMode, o
         <TransformControls
           object={groupRef}
           mode={transformMode}
-          space="world"
+          space={transformSpace}
           size={0.8}
           showX={transformMode !== 'scale' || !scaleAxisLocks[0]}
           showY={transformMode !== 'scale' || !scaleAxisLocks[1]}
           showZ={transformMode !== 'scale' || !scaleAxisLocks[2]}
-          translationSnap={0.1}
-          rotationSnap={Math.PI / 36}
+          translationSnap={snapEnabled ? 0.1 : null}
+          rotationSnap={snapEnabled ? Math.PI / 36 : null}
+          scaleSnap={snapEnabled ? 0.1 : null}
           onMouseDown={() => { if (transformMode === 'scale' && groupRef.current) scaleTransformStart.current = groupRef.current.scale.toArray() }}
           onObjectChange={syncTransform}
           onMouseUp={() => { syncTransform(); scaleTransformStart.current = null }}
@@ -1074,7 +1088,7 @@ function SceneObject({ data, selected, selectedId, activeJoint, transformMode, o
   )
 }
 
-function CameraModel({ data, selected, selectedId, transformMode, onSelect, onUpdate }) {
+function CameraModel({ data, selected, selectedId, transformMode, transformSpace = 'world', snapEnabled = true, onSelect, onUpdate }) {
   const groupRef = useRef(null)
   const syncTransform = useCallback(() => {
     if (!groupRef.current) return
@@ -1128,10 +1142,10 @@ function CameraModel({ data, selected, selectedId, transformMode, onSelect, onUp
         <TransformControls
           object={groupRef}
           mode={transformMode}
-          space={transformMode === 'rotate' ? 'local' : 'world'}
+          space={transformSpace}
           size={0.8}
-          translationSnap={0.1}
-          rotationSnap={Math.PI / 36}
+          translationSnap={snapEnabled ? 0.1 : null}
+          rotationSnap={snapEnabled ? Math.PI / 36 : null}
           onObjectChange={syncTransform}
           onMouseUp={syncTransform}
         />
@@ -1228,7 +1242,7 @@ function EditorCameraReporter({ enabled, onChange }) {
   return null
 }
 
-function EditorScene({ objects, selectedId, activeJoint, onSelect, onJointSelect, transformMode, onUpdateObject, cameraData, onUpdateCamera, editorCameraData, onEditorCameraChange, lighting, showGrid, focusRequest, referenceVisible = false, cameraView = false, animationTime = 0 }) {
+function EditorScene({ objects, selectedId, activeJoint, onSelect, onJointSelect, transformMode, transformSpace, snapEnabled, groundRequest, onUpdateObject, cameraData, onUpdateCamera, editorCameraData, onEditorCameraChange, lighting, showGrid, focusRequest, referenceVisible = false, cameraView = false, animationTime = 0 }) {
   return (
     <>
       {!referenceVisible && <color attach="background" args={['#555653']} />}
@@ -1236,8 +1250,8 @@ function EditorScene({ objects, selectedId, activeJoint, onSelect, onJointSelect
       <RendererExposure value={lighting?.exposure} />
       <StudioLights lighting={lighting} />
       <Ground showGrid={showGrid} showSurface={!referenceVisible} />
-      {objects.map(object => <SceneObject key={object.id} data={object} selected={selectedId === object.id} selectedId={selectedId} activeJoint={activeJoint} transformMode={transformMode} onSelect={onSelect} onJointSelect={onJointSelect} onUpdate={onUpdateObject} animationTime={animationTime} />)}
-      {!cameraView && <CameraModel data={cameraData} selected={selectedId === CAMERA_ID} selectedId={selectedId} transformMode={transformMode} onSelect={onSelect} onUpdate={onUpdateCamera} />}
+      {objects.map(object => <SceneObject key={object.id} data={object} selected={selectedId === object.id} selectedId={selectedId} activeJoint={activeJoint} transformMode={transformMode} transformSpace={transformSpace} snapEnabled={snapEnabled} groundRequest={groundRequest} onSelect={onSelect} onJointSelect={onJointSelect} onUpdate={onUpdateObject} animationTime={animationTime} />)}
+      {!cameraView && <CameraModel data={cameraData} selected={selectedId === CAMERA_ID} selectedId={selectedId} transformMode={transformMode} transformSpace={transformSpace} snapEnabled={snapEnabled} onSelect={onSelect} onUpdate={onUpdateCamera} />}
       <ContactShadows position={[0, 0.01, 0]} opacity={0.42} scale={18} blur={2.4} far={9} />
       {cameraView ? <PreviewCameraController cameraData={cameraData} /> : <OrbitControls makeDefault target={editorCameraData?.target || [0, 1, 0]} minDistance={2} maxDistance={35} maxPolarAngle={Math.PI * 0.49} />}
       <EditorCameraReporter enabled={!cameraView} onChange={onEditorCameraChange} />
