@@ -7,13 +7,19 @@ import { DepthScene } from './DepthScene.jsx'
 import { createSampleAssets } from './sampleAssets.js'
 
 const defaultSettings = {
-  depthStrength: 0.72,
-  viewAngle: 14,
+  depthStrength: 0.64,
+  viewAngle: 10,
   fov: 44,
   quality: 192,
   invertDepth: false,
   wireframe: false,
   background: 'studio',
+}
+
+const dinoSample = {
+  color: `${import.meta.env.BASE_URL}samples/minimax-h3/original.png`,
+  depth: `${import.meta.env.BASE_URL}samples/minimax-h3/depth.png?v=2`,
+  dimensions: { width: 825, height: 1101 },
 }
 
 function readImage(file) {
@@ -102,8 +108,9 @@ function RangeControl({ label, value, min, max, step, unit, onChange }) {
 
 function App() {
   const sample = useMemo(createSampleAssets, [])
-  const [colorAsset, setColorAsset] = useState({ url: sample.color, name: '程序示例 · 原图', dimensions: sample.dimensions })
-  const [depthAsset, setDepthAsset] = useState({ url: sample.depth, name: '程序示例 · 深度图', dimensions: sample.dimensions })
+  const [activePreset, setActivePreset] = useState('dino')
+  const [colorAsset, setColorAsset] = useState({ url: dinoSample.color, name: '恐龙实测 · 原图', dimensions: dinoSample.dimensions })
+  const [depthAsset, setDepthAsset] = useState({ url: dinoSample.depth, name: '恐龙实测 · 深度图', dimensions: dinoSample.dimensions })
   const [settings, setSettings] = useState(defaultSettings)
   const [error, setError] = useState('')
   const [ready, setReady] = useState(false)
@@ -118,10 +125,26 @@ function App() {
       setError('')
       const image = await readImage(file)
       setter(image)
+      setActivePreset('custom')
     } catch (loadError) {
       setError(loadError.message)
     }
   }, [])
+
+  const loadPreset = preset => {
+    setError('')
+    setActivePreset(preset)
+    if (preset === 'dino') {
+      setColorAsset({ url: dinoSample.color, name: '恐龙实测 · 原图', dimensions: dinoSample.dimensions })
+      setDepthAsset({ url: dinoSample.depth, name: '恐龙实测 · 深度图', dimensions: dinoSample.dimensions })
+      setSettings(current => ({ ...current, depthStrength: 0.64, viewAngle: 10, fov: 44 }))
+    } else {
+      setColorAsset({ url: sample.color, name: '程序示例 · 原图', dimensions: sample.dimensions })
+      setDepthAsset({ url: sample.depth, name: '程序示例 · 深度图', dimensions: sample.dimensions })
+      setSettings(current => ({ ...current, depthStrength: 0.72, viewAngle: 14, fov: 44 }))
+    }
+    requestAnimationFrame(() => sceneRef.current?.resetView())
+  }
 
   const resetAll = () => {
     setSettings(defaultSettings)
@@ -168,6 +191,10 @@ function App() {
           </div>
           <div className="panel-body">
             <p className="panel-note">深度图建议使用灰度图：白色靠近相机，黑色远离相机。</p>
+            <div className="preset-switcher" aria-label="示例素材">
+              <button type="button" className={activePreset === 'dino' ? 'is-active' : ''} onClick={() => loadPreset('dino')}>恐龙实测</button>
+              <button type="button" className={activePreset === 'procedural' ? 'is-active' : ''} onClick={() => loadPreset('procedural')}>程序示例</button>
+            </div>
             <FileDrop
               kind="COLOR"
               title="原图预览"

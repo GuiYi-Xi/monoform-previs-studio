@@ -69,6 +69,10 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .step-index { color: #565850; font: 10px/1 "Cascadia Mono", monospace; }
 .panel-body { min-height: 0; overflow: auto; padding: 14px; scrollbar-width: thin; scrollbar-color: #4e4f48 transparent; }
 .panel-note { margin: 0 0 13px; color: var(--text-faint); font-size: 10px; line-height: 1.65; text-wrap: pretty; }
+.preset-switcher { margin: 0 0 11px; display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 3px; border: 1px solid var(--line-soft); border-radius: 5px; background: #181917; }
+.preset-switcher button { height: 28px; border: 1px solid transparent; border-radius: 3px; background: transparent; color: var(--text-faint); font-size: 8px; cursor: pointer; }
+.preset-switcher button:hover { color: var(--text-dim); }
+.preset-switcher button.is-active { border-color: #4d493f; background: var(--surface-raised); color: var(--accent); }
 .panel-foot { min-height: 42px; padding: 0 13px; display: flex; align-items: center; gap: 7px; border-top: 1px solid var(--line-soft); background: #1c1d1a; color: var(--text-faint); font-size: 8px; }
 
 .file-card { position: relative; margin-bottom: 10px; padding: 8px; display: grid; grid-template-columns: 76px minmax(0,1fr) 18px; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-raised); transition: border-color 150ms ease, background 150ms ease; }
