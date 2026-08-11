@@ -14,11 +14,11 @@ const CAMERA_ID = '__shot_camera__'
 const PROJECT_STORAGE_KEY = 'monoform-project'
 const LEGACY_PROJECT_STORAGE_KEY = 'stageframe-project'
 const CUSTOM_POSE_STORAGE_KEY = 'monoform-custom-poses'
-const PROJECT_VERSION = 15
+const PROJECT_VERSION = 16
 const DEFAULT_PROJECT_SETTINGS = {
   name: '未命名场景',
   fps: 24,
-  durationSeconds: 5,
+  durationSeconds: 15,
   loopPlayback: false,
 }
 const DEFAULT_LIGHTING = {
@@ -39,12 +39,39 @@ const ASPECT_RATIOS = [
   { value: '16:9', label: '16 : 9 · 横屏视频', ratio: 16 / 9 },
   { value: '9:16', label: '9 : 16 · 竖屏短视频', ratio: 9 / 16 },
   { value: '4:3', label: '4 : 3 · 经典画幅', ratio: 4 / 3 },
+  { value: '3:4', label: '3 : 4 · 竖版经典画幅', ratio: 3 / 4 },
   { value: '3:2', label: '3 : 2 · 摄影画幅', ratio: 3 / 2 },
   { value: '1:1', label: '1 : 1 · 方形画幅', ratio: 1 },
   { value: '1.85:1', label: '1.85 : 1 · 影院宽屏', ratio: 1.85 },
   { value: '2.39:1', label: '2.39 : 1 · 电影宽银幕', ratio: 2.39 },
+  { value: 'custom', label: '自定义画幅' },
 ]
-const aspectValue = value => ASPECT_RATIOS.find(option => option.value === value)?.ratio || 16 / 9
+const COMMON_ASPECT_RATIOS = ['16:9', '9:16', '4:3', '3:4']
+const CUSTOM_ASPECT_PATTERN = /^custom:([0-9]+(?:\.[0-9]+)?):([0-9]+(?:\.[0-9]+)?)$/
+const cleanAspectPart = value => String(Math.round(clamp(Number(value) || 1, 0.1, 100) * 100) / 100)
+const customAspectParts = value => {
+  const match = String(value || '').match(CUSTOM_ASPECT_PATTERN)
+  return match ? [Number(match[1]), Number(match[2])] : [16, 9]
+}
+const customAspectValue = (width, height) => `custom:${cleanAspectPart(width)}:${cleanAspectPart(height)}`
+const aspectSelectValue = value => CUSTOM_ASPECT_PATTERN.test(String(value || '')) ? 'custom' : value
+const aspectValue = value => {
+  const custom = String(value || '').match(CUSTOM_ASPECT_PATTERN)
+  if (custom) return Number(custom[1]) / Math.max(0.1, Number(custom[2]))
+  return ASPECT_RATIOS.find(option => option.value === value)?.ratio || 16 / 9
+}
+const aspectLabel = value => {
+  if (aspectSelectValue(value) === 'custom') {
+    const [width, height] = customAspectParts(value)
+    return `${width} : ${height} · 自定义`
+  }
+  return value || '16:9'
+}
+const customAspectFrom = value => {
+  if (aspectSelectValue(value) === 'custom') return value
+  const parts = String(value || '16:9').split(':').map(Number)
+  return customAspectValue(parts[0] || 16, parts[1] || 9)
+}
 const nextPaint = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
 
 function exportDimensionsForAspect(aspectRatio) {
@@ -131,7 +158,9 @@ function normalizeCamera(camera = {}) {
     position,
     rotation,
     focalLength: clamp(Number(camera.focalLength) || initialCamera.focalLength, 18, 120),
-    aspectRatio: ASPECT_RATIOS.some(option => option.value === camera.aspectRatio) ? camera.aspectRatio : initialCamera.aspectRatio,
+    aspectRatio: ASPECT_RATIOS.some(option => option.ratio && option.value === camera.aspectRatio) || CUSTOM_ASPECT_PATTERN.test(String(camera.aspectRatio || ''))
+      ? camera.aspectRatio
+      : initialCamera.aspectRatio,
   }
 }
 
@@ -228,7 +257,7 @@ function readCustomPoses() {
       ...pose,
       pose: normalizePoseId(pose.pose),
       poseTime: Number.isFinite(pose.poseTime) ? pose.poseTime : presetPhase(pose.pose),
-      rigRoot: Array.isArray(pose.rigRoot) ? pose.rigRoot.slice(0, 3) : presetRoot(),
+      rigRoot: Array.isArray(pose.rigRoot) ? pose.rigRoot.slice(0, 3) : presetRoot(pose.pose),
       joints: cloneJointPose(pose.joints),
     }))
   } catch {
@@ -299,7 +328,12 @@ function normalizeProjectData(data) {
   const firstShot = Array.isArray(data.shots) ? data.shots[0] : null
   const sourceObjects = Array.isArray(data.objects) ? data.objects : firstShot?.objects
   if (!Array.isArray(sourceObjects)) return null
-  const settings = normalizeProjectSettings(data.settings)
+  const migrateLegacyDefaultDuration = Number(data.version || 0) < PROJECT_VERSION
+  const legacySettingsDuration = Number(data.settings?.durationSeconds)
+  const settings = normalizeProjectSettings({
+    ...data.settings,
+    durationSeconds: migrateLegacyDefaultDuration && legacySettingsDuration === 5 ? DEFAULT_PROJECT_SETTINGS.durationSeconds : data.settings?.durationSeconds,
+  })
   const fallback = {
     settings,
     objects: sourceObjects,
@@ -321,7 +355,13 @@ function normalizeProjectData(data) {
     keyframes: fallback.keyframes,
     objectKeyframes: fallback.objectKeyframes,
   }]
-  const shots = rawShots.slice(0, 30).map((shot, index) => normalizeShot(shot, index, fallback))
+  const shots = rawShots.slice(0, 30).map((shot, index) => {
+    const legacyShotDuration = Number(shot?.durationSeconds ?? shot?.settings?.durationSeconds)
+    const migratedShot = migrateLegacyDefaultDuration && legacyShotDuration === 5
+      ? { ...shot, durationSeconds: DEFAULT_PROJECT_SETTINGS.durationSeconds, settings: { ...shot?.settings, durationSeconds: DEFAULT_PROJECT_SETTINGS.durationSeconds } }
+      : shot
+    return normalizeShot(migratedShot, index, fallback)
+  })
   const activeShotId = shots.some(shot => shot.id === data.activeShotId) ? data.activeShotId : shots[0].id
   const activeShot = shots.find(shot => shot.id === activeShotId) || shots[0]
   return {
@@ -651,8 +691,8 @@ function Inspector({ selected, camera, selectedJoint, customPoses, onSelectJoint
     pose: normalizePoseId(pose),
     poseTime: presetPhase(pose),
     continuousMotion: poseCanLoop(pose) ? Boolean(selected.continuousMotion) : false,
-    rigRoot: presetRoot(),
-    joints: presetJoints(),
+    rigRoot: presetRoot(pose),
+    joints: presetJoints(pose),
   })
   return (
     <aside className="right-sidebar panel">
@@ -702,7 +742,11 @@ function Inspector({ selected, camera, selectedJoint, customPoses, onSelectJoint
               {FOCAL_LENGTH_PRESETS.map(value => <button type="button" key={value} className={Math.round(camera.focalLength) === value ? 'is-active' : ''} onClick={() => onUpdateCamera({ focalLength: value })}>{value}</button>)}
             </div>
             <div className="camera-info"><span>传感器</span><strong>全画幅 36 mm</strong></div>
-            <label className="select-field aspect-field"><span>画面比例</span><select value={camera.aspectRatio || '16:9'} onChange={e => onUpdateCamera({ aspectRatio: e.target.value })}>{ASPECT_RATIOS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+            <label className="select-field aspect-field"><span>画面比例</span><select value={aspectSelectValue(camera.aspectRatio || '16:9')} onChange={event => onUpdateCamera({ aspectRatio: event.target.value === 'custom' ? customAspectFrom(camera.aspectRatio) : event.target.value })}>{ASPECT_RATIOS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+            {aspectSelectValue(camera.aspectRatio) === 'custom' && (() => {
+              const [customWidth, customHeight] = customAspectParts(camera.aspectRatio)
+              return <div className="custom-aspect-inputs"><span>自定义</span><input aria-label="自定义画幅宽" type="number" min="0.1" max="100" step="0.1" value={customWidth} onChange={event => onUpdateCamera({ aspectRatio: customAspectValue(event.target.value, customHeight) })} /><i>:</i><input aria-label="自定义画幅高" type="number" min="0.1" max="100" step="0.1" value={customHeight} onChange={event => onUpdateCamera({ aspectRatio: customAspectValue(customWidth, event.target.value) })} /></div>
+            })()}
           </div>
         ) : selected.type === 'person' ? (
           <div className="inspector-section">
@@ -722,7 +766,7 @@ function Inspector({ selected, camera, selectedJoint, customPoses, onSelectJoint
                   <div className="pose-group-label">{group.label}</div>
                   <div className="pose-grid">
                     {group.poses.map(([value, label]) => (
-                      <button key={value} type="button" data-pose={value} className={selected.pose === value ? 'is-active' : ''} onClick={() => applyPreset(value)} title={`${group.label} · ${label}`}>
+                      <button key={value} type="button" data-pose={value} className={normalizePoseId(selected.pose) === value ? 'is-active' : ''} onClick={() => applyPreset(value)} title={`${group.label} · ${label}`}>
                         <span className="pose-figure"><i /><i /><i /></span>
                         <strong>{label}</strong>
                       </button>
@@ -736,7 +780,7 @@ function Inspector({ selected, camera, selectedJoint, customPoses, onSelectJoint
               <label className="select-field"><span>当前骨骼</span><select value={selectedJoint} onChange={event => onSelectJoint(event.target.value)}>{JOINT_GROUPS.map(group => <optgroup key={group.label} label={group.label}>{group.joints.map(joint => <option key={joint.id} value={joint.id}>{joint.label}</option>)}</optgroup>)}</select></label>
               <VectorFields title="关节旋转" value={jointRotation} degrees onChange={updateJoint} />
               <button type="button" className="joint-reset-button" onClick={() => updateJoint([0, 0, 0])}>重置当前关节</button>
-              <button type="button" className="joint-reset-button" onClick={() => onUpdateObject({ joints: presetJoints() })}>重置全部骨骼</button>
+              <button type="button" className="joint-reset-button" onClick={() => onUpdateObject({ joints: presetJoints(selected.pose) })}>重置全部骨骼</button>
               <p className="joint-editor-hint">按 Q 后拖动青绿色的手脚控制点可摆放四肢末端；拖动人物其他部位或金色骨骼点可旋转单根骨骼。按住 Shift 左右拖可调整单骨骼扭转，也可使用 X/Y/Z 滑块微调。</p>
               <label className="foot-lock-control">
                 <input type="checkbox" checked={Boolean(selected.footLock)} onChange={event => onUpdateObject({ footLock: event.target.checked })} />
@@ -781,20 +825,42 @@ function ProjectSettingsDialog({ settings, onApply, onClose }) {
     <div className="settings-overlay" role="presentation" onPointerDown={event => { if (event.target === event.currentTarget) onClose() }}>
       <form className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="project-settings-title" onSubmit={submit}>
         <div className="settings-dialog-head">
-          <div><Settings2 size={17} /><span><strong id="project-settings-title">镜头设置</strong><small>工程时间与播放</small></span></div>
-          <button type="button" onClick={onClose} aria-label="关闭镜头设置">关闭</button>
+          <div><Settings2 size={17} /><span><strong id="project-settings-title">时间轴设置</strong><small>先确定时长，再制作关键帧</small></span></div>
+          <button type="button" onClick={onClose} aria-label="关闭时间轴设置">关闭</button>
         </div>
         <div className="settings-fields">
           <label><span>工程名称</span><input autoFocus value={draft.name} maxLength="40" onChange={event => setDraft(current => ({ ...current, name: event.target.value }))} /></label>
           <div className="settings-field-row">
             <label><span>帧率</span><select value={draft.fps} onChange={event => setDraft(current => ({ ...current, fps: Number(event.target.value) }))}>{FPS_OPTIONS.map(value => <option value={value} key={value}>{value} FPS</option>)}</select></label>
-            <label><span>镜头时长</span><div className="duration-input"><input type="number" min="1" max="60" step="1" value={draft.durationSeconds} onChange={event => setDraft(current => ({ ...current, durationSeconds: event.target.value }))} /><i>秒</i></div></label>
+            <label><span>时间轴总时长</span><div className="duration-input"><input type="number" min="1" max="60" step="1" value={draft.durationSeconds} onChange={event => setDraft(current => ({ ...current, durationSeconds: event.target.value }))} /><i>秒</i></div></label>
           </div>
-          <div className="settings-summary"><span>时间轴范围</span><strong>0–{Number.isFinite(totalFrames) ? totalFrames : 0} 帧</strong><small>{draft.fps || 0} FPS · 最长 60 秒</small></div>
+          <div className="settings-summary"><span>关键帧条范围</span><strong>0–{Number.isFinite(totalFrames) ? totalFrames : 0} 帧</strong><small>{draft.fps || 0} FPS · 导出 MP4 将严格使用此时长</small></div>
           <label className="settings-toggle"><input type="checkbox" checked={Boolean(draft.loopPlayback)} onChange={event => setDraft(current => ({ ...current, loopPlayback: event.target.checked }))} /><span><strong>循环播放</strong><small>到达镜头结尾后自动从第 0 帧继续</small></span></label>
         </div>
         <div className="settings-dialog-actions"><button type="button" onClick={onClose}>取消</button><button type="submit">应用设置</button></div>
       </form>
+    </div>
+  )
+}
+
+function ViewportAspectPicker({ value, onChange }) {
+  const selected = aspectSelectValue(value)
+  const [customWidth, customHeight] = customAspectParts(value)
+  const choose = next => onChange(next === 'custom' ? customAspectFrom(value) : next)
+  return (
+    <div className="viewport-aspect-picker floating-panel" aria-label="主视图画面比例">
+      <span className="viewport-aspect-label">画幅</span>
+      {COMMON_ASPECT_RATIOS.map(ratio => (
+        <button type="button" key={ratio} className={selected === ratio ? 'is-active' : ''} onClick={() => choose(ratio)}>{ratio}</button>
+      ))}
+      <button type="button" className={selected === 'custom' ? 'is-active' : ''} onClick={() => choose('custom')}>自定义</button>
+      {selected === 'custom' && (
+        <span className="viewport-custom-aspect">
+          <input aria-label="自定义画幅宽" type="number" min="0.1" max="100" step="0.1" value={customWidth} onChange={event => onChange(customAspectValue(event.target.value, customHeight))} />
+          <i>:</i>
+          <input aria-label="自定义画幅高" type="number" min="0.1" max="100" step="0.1" value={customHeight} onChange={event => onChange(customAspectValue(customWidth, event.target.value))} />
+        </span>
+      )}
     </div>
   )
 }
@@ -883,7 +949,7 @@ function CameraAnglePanel({ camera, onChange, onClose, onLevel }) {
   )
 }
 
-function Timeline({ currentFrame, fps, totalFrames, onSeek, playing, onTogglePlay, keyframes, onAddKeyframe, onDeleteKeyframe, objectTrack, onAddObjectKeyframe, onDeleteObjectKeyframe, selectedKeyframe, onSelectKeyframe, onMoveKeyframe, onCopyKeyframe, onPasteKeyframe, onDeleteSelectedKeyframe, onChangeInterpolation, hasClipboard }) {
+function Timeline({ currentFrame, fps, totalFrames, onOpenSettings, onSeek, playing, onTogglePlay, keyframes, onAddKeyframe, onDeleteKeyframe, objectTrack, onAddObjectKeyframe, onDeleteObjectKeyframe, selectedKeyframe, onSelectKeyframe, onMoveKeyframe, onCopyKeyframe, onPasteKeyframe, onDeleteSelectedKeyframe, onChangeInterpolation, hasClipboard }) {
   const [dragging, setDragging] = useState(null)
   const rulerFrames = useMemo(() => [...new Set(Array.from({ length: 6 }, (_, index) => Math.round(totalFrames * index / 5)))], [totalFrames])
   const scrub = useCallback((event, rect) => {
@@ -957,6 +1023,7 @@ function Timeline({ currentFrame, fps, totalFrames, onSeek, playing, onTogglePla
       </div>
       <div className="timeline-body">
         <div className="ruler timeline-ruler">{rulerFrames.map(frame => <span key={frame} style={{ left: `${frame / totalFrames * 100}%` }}>{frame}</span>)}</div>
+        <button type="button" className="timeline-settings-button" onClick={onOpenSettings} title="设置时间轴时长和帧率"><Settings2 size={12} /> 时间轴设置</button>
         <div className="track-label camera-track-label"><Camera size={13} /><span>主摄像机</span></div>
         <div className="camera-track-slot">{renderTrack(keyframes, 'camera', onDeleteKeyframe)}</div>
         <button className="keyframe-button camera-keyframe-button" onClick={onAddKeyframe}><Plus size={13} /> 镜头关键帧</button>
@@ -974,8 +1041,9 @@ function Timeline({ currentFrame, fps, totalFrames, onSeek, playing, onTogglePla
 
 function referenceImageFromFile(file) {
   return new Promise((resolve, reject) => {
-    if (!file?.type?.startsWith('image/')) { reject(new Error('请选择图片文件')); return }
-    if (file.size > 20 * 1024 * 1024) { reject(new Error('参考图不能超过 20 MB')); return }
+    const imageExtension = /\.(png|jpe?g|webp|bmp|gif)$/i.test(file?.name || '')
+    if (!file || (!file.type?.startsWith('image/') && !imageExtension)) { reject(new Error('请选择 PNG、JPG、WEBP、BMP 或 GIF 图片')); return }
+    if (file.size > 50 * 1024 * 1024) { reject(new Error('参考图不能超过 50 MB')); return }
     const reader = new FileReader()
     reader.onerror = () => reject(new Error('图片读取失败'))
     reader.onload = () => {
@@ -1027,14 +1095,13 @@ function referenceCanvasForExport(reference, width, height) {
 }
 
 function ReferenceOverlay({ reference, onChange, onToast, cameraMode = false, cameraAspect = 16 / 9, children }) {
-  const inputRef = useRef(null)
   const dragRef = useRef(null)
   const [editing, setEditing] = useState(false)
   const [expanded, setExpanded] = useState(true)
   const update = patch => onChange(current => normalizeReference({ ...current, ...patch }))
   const upload = async event => {
-    const file = event.target.files?.[0]
-    event.target.value = ''
+    const input = event.currentTarget
+    const file = input.files?.[0]
     if (!file) return
     try {
       const image = await referenceImageFromFile(file)
@@ -1044,6 +1111,8 @@ function ReferenceOverlay({ reference, onChange, onToast, cameraMode = false, ca
       onToast(`参考图“${file.name}”已加入 · 可切换到“摄像机视角”核对导出构图`)
     } catch (error) {
       onToast(error.message || '参考图上传失败')
+    } finally {
+      input.value = ''
     }
   }
   const beginDrag = event => {
@@ -1068,7 +1137,7 @@ function ReferenceOverlay({ reference, onChange, onToast, cameraMode = false, ca
     event.currentTarget.releasePointerCapture?.(event.pointerId)
   }
   const hasImage = Boolean(reference.image)
-  const referenceLayer = hasImage && (cameraMode ? reference.includeInExport : reference.visible) ? (
+  const referenceLayer = hasImage && reference.visible ? (
     <div className={`reference-layer ${editing ? 'is-editing' : ''}`} aria-label={`参考图 ${reference.name}`}>
       <img
         src={reference.image}
@@ -1085,12 +1154,11 @@ function ReferenceOverlay({ reference, onChange, onToast, cameraMode = false, ca
   return (
     <>
       <div className={`reference-panel floating-panel ${hasImage ? 'has-image' : ''} ${hasImage && !expanded ? 'is-collapsed' : ''}`}>
-        <input ref={inputRef} className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp" onChange={upload} />
         {hasImage && !expanded ? (
           <button type="button" className="reference-expand" title="展开参考图工具" aria-label="展开参考图工具" onClick={() => setExpanded(true)}><FileImage size={13} /><ChevronDown size={11} /></button>
         ) : (
           <>
-            <button type="button" className="reference-upload" onClick={() => inputRef.current?.click()}><FileImage size={13} /> {hasImage ? '更换参考图' : '上传参考图'}</button>
+            <label className="reference-upload reference-upload-label"><input type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.bmp,.gif" onChange={upload} /><FileImage size={13} /> {hasImage ? '更换参考图' : '上传参考图'}</label>
             {hasImage && (
               <>
                 <button type="button" className={reference.visible ? 'is-active' : ''} onClick={() => update({ visible: !reference.visible })}>{reference.visible ? '隐藏' : '显示'}</button>
@@ -1449,7 +1517,7 @@ export default function App() {
       return nextFrame
     })
     setSettingsOpen(false)
-    setToast(`镜头设置已更新 · ${next.fps} FPS · ${next.durationSeconds} 秒`)
+    setToast(`时间轴已更新 · ${next.fps} FPS · ${next.durationSeconds} 秒`)
   }
 
   const thumbnailFromMonitor = () => {
@@ -1613,6 +1681,12 @@ export default function App() {
   }
   const updateObjectById = (id, patch) => {
     setObjectDrafts(drafts => {
+      if (!characterKeyframes[id]?.length) {
+        if (!(id in drafts)) return drafts
+        const next = { ...drafts }
+        delete next[id]
+        return next
+      }
       const source = drafts[id] || objectAtFrame(objects.find(object => object.id === id), characterKeyframes[id], currentFrame, fps)
       return source ? { ...drafts, [id]: { ...source, ...patch } } : drafts
     })
@@ -1679,7 +1753,7 @@ export default function App() {
     updateSelected({
       pose: normalizePoseId(customPose.pose),
       poseTime: Number.isFinite(customPose.poseTime) ? customPose.poseTime : presetPhase(customPose.pose),
-      rigRoot: [...(customPose.rigRoot || presetRoot())],
+      rigRoot: [...(customPose.rigRoot || presetRoot(customPose.pose))],
       joints: cloneJointPose(customPose.joints),
     })
     setToast(`已应用姿势“${customPose.name}”`)
@@ -1864,6 +1938,7 @@ export default function App() {
   const handleExportMp4 = async () => {
     if (exportLockRef.current || exporting || capturingImage) return
     exportLockRef.current = true
+    const nextExportFrameCount = totalFrames
     const originalFrame = currentFrameRef.current
     const originalCamera = keyframes.length ? cameraAtFrame(keyframes, originalFrame, camera.aspectRatio) : camera
     let output
@@ -1905,14 +1980,13 @@ export default function App() {
       output.addVideoTrack(videoSource, { frameRate: fps })
       await output.start()
 
-      const exportFrameCount = totalFrames
-      for (let sample = 0; sample < exportFrameCount; sample += 1) {
-        const timelineFrame = exportFrameCount > 1 ? sample / (exportFrameCount - 1) * totalFrames : 0
+      for (let sample = 0; sample < nextExportFrameCount; sample += 1) {
+        const timelineFrame = Math.min(sample, totalFrames)
         setCurrentFrame(timelineFrame)
         currentFrameRef.current = timelineFrame
         await nextPaint()
         await videoSource.add(sample / fps, 1 / fps, { keyFrame: sample % (fps * 2) === 0 })
-        setExportProgress(Math.round((sample + 1) / exportFrameCount * 100))
+        setExportProgress(Math.round((sample + 1) / nextExportFrameCount * 100))
       }
 
       await output.finalize()
@@ -1928,7 +2002,7 @@ export default function App() {
       link.click()
       link.remove()
       URL.revokeObjectURL(link.href)
-      setToast(`MP4 已导出 · ${width} × ${height} · ${fps} FPS`)
+      setToast(`MP4 已导出 · ${width} × ${height} · ${fps} FPS · ${settings.durationSeconds} 秒`)
     } catch (error) {
       if (output && output.state !== 'finalized') await output.cancel().catch(() => {})
       setToast(error?.message || 'MP4 导出失败')
@@ -1977,7 +2051,7 @@ export default function App() {
     const resetObjects = cloneProjectValue(initialObjects)
     const resetCamera = cloneProjectValue(initialCamera)
     setSettings({ ...DEFAULT_PROJECT_SETTINGS })
-    setShots([{ id: 'shot-01', name: '镜头 01', thumbnail: '', fps: 24, durationSeconds: 5, loopPlayback: false, objects: resetObjects, camera: resetCamera, lighting: cloneProjectValue(DEFAULT_LIGHTING), reference: cloneProjectValue(DEFAULT_REFERENCE), keyframes: [], objectKeyframes: {} }])
+    setShots([{ id: 'shot-01', name: '镜头 01', thumbnail: '', fps: DEFAULT_PROJECT_SETTINGS.fps, durationSeconds: DEFAULT_PROJECT_SETTINGS.durationSeconds, loopPlayback: DEFAULT_PROJECT_SETTINGS.loopPlayback, objects: resetObjects, camera: resetCamera, lighting: cloneProjectValue(DEFAULT_LIGHTING), reference: cloneProjectValue(DEFAULT_REFERENCE), keyframes: [], objectKeyframes: {} }])
     setActiveShotId('shot-01')
     setObjects(resetObjects)
     setCamera(resetCamera)
@@ -1992,7 +2066,7 @@ export default function App() {
     setPlaying(false)
     setSettingsOpen(false)
     setSelectedId('actor-lead')
-    setToast('已新建空关键帧工程')
+    setToast('已新建空关键帧工程 · 可在时间轴右侧设置时长')
   }
 
   return (
@@ -2011,7 +2085,7 @@ export default function App() {
           <ToolButton icon={Undo2} label="撤销" shortcut="Ctrl+Z" onClick={undo} disabled={!historyRef.current.past.length} />
           <ToolButton icon={Redo2} label="重做" shortcut="Ctrl+Y" onClick={redo} disabled={!historyRef.current.future.length} />
         </nav>
-        <div className="project-title"><i className={`status-dot ${saveStatus === '保存中…' ? '' : 'live'}`} /><button type="button" onClick={() => setSettingsOpen(true)} title="打开镜头设置"><span>{settings.name}</span><Settings2 size={12} /></button><small>{activeShot?.name} · {saveStatus}</small></div>
+        <div className="project-title"><i className={`status-dot ${saveStatus === '保存中…' ? '' : 'live'}`} /><button type="button" onClick={() => setSettingsOpen(true)} title="打开时间轴设置"><span>{settings.name}</span><Settings2 size={12} /></button><small>{activeShot?.name} · {saveStatus}</small></div>
         <div className="export-actions">
           <button className="project-export-button" onClick={() => saveProject({ download: true })} disabled={exporting || capturingImage}><Download size={14} /> 导出工程</button>
           <button className="project-export-button capture-image-button" onClick={handleCaptureImage} disabled={exporting || capturingImage}><FileImage size={14} /> {capturingImage ? '截图中…' : '截图 PNG'}</button>
@@ -2055,10 +2129,11 @@ export default function App() {
           </div>
           {lightingPanelOpen && <LightingPanel lighting={lighting} onChange={setLighting} onClose={() => setLightingPanelOpen(false)} />}
           {cameraView && cameraAnglePanelOpen && <CameraAnglePanel camera={camera} onChange={patch => setCamera(current => ({ ...current, ...patch }))} onClose={() => setCameraAnglePanelOpen(false)} onLevel={levelCameraHorizon} />}
-          <div className="viewport-label"><strong>{cameraView ? '摄像机视角' : '编辑视角'}</strong><span>{cameraView ? `${displayCamera.aspectRatio || '16:9'} · 正在查看场景中的主摄像机` : '固定观察相机 · 可查看并调整场景中的主摄像机'}</span></div>
+          <div className="viewport-label"><strong>{cameraView ? '摄像机视角' : '编辑视角'}</strong><span>{cameraView ? `${aspectLabel(displayCamera.aspectRatio)} · 正在查看场景中的主摄像机` : '固定观察相机 · 可查看并调整场景中的主摄像机'}</span></div>
+          <ViewportAspectPicker value={camera.aspectRatio} onChange={aspectRatio => setCamera(current => ({ ...current, aspectRatio }))} />
           <ReferenceOverlay reference={reference} onChange={setReference} onToast={setToast} cameraMode={cameraView} cameraAspect={previewAspect}>
             <div className="viewport-canvas-layer">
-              <MainViewport key={cameraView ? 'shot-view' : 'scene-view'} cameraView={cameraView} editorCameraData={editorView} onEditorCameraChange={captureEditorView} objects={animatedObjects} animationTime={currentFrame / fps} selectedId={selectedId} activeJoint={selectedJoint} onSelect={setSelectedId} onJointSelect={(objectId, jointId) => { setSelectedId(objectId); setSelectedJoint(jointId) }} transformMode={transformMode} transformSpace={transformSpace} snapEnabled={snapEnabled} groundRequest={groundRequest} onUpdateObject={updateObjectById} cameraData={displayCamera} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} lighting={lighting} showGrid={showGrid} focusRequest={viewFocusRequest} referenceVisible={Boolean(reference.image && (cameraView ? reference.includeInExport : reference.visible))} />
+              <MainViewport key={cameraView ? 'shot-view' : 'scene-view'} cameraView={cameraView} cameraAspect={previewAspect} editorCameraData={editorView} onEditorCameraChange={captureEditorView} objects={animatedObjects} animationTime={currentFrame / fps} selectedId={selectedId} activeJoint={selectedJoint} onSelect={setSelectedId} onJointSelect={(objectId, jointId) => { setSelectedId(objectId); setSelectedJoint(jointId) }} transformMode={transformMode} transformSpace={transformSpace} snapEnabled={snapEnabled} groundRequest={groundRequest} onUpdateObject={updateObjectById} cameraData={displayCamera} onUpdateCamera={patch => setCamera(current => ({ ...current, ...patch }))} lighting={lighting} showGrid={showGrid} focusRequest={viewFocusRequest} referenceVisible={Boolean(reference.image && reference.visible)} />
             </div>
           </ReferenceOverlay>
           <div className="navigation-hint"><span><MousePointer2 size={12} /> 点击物体选择</span>{cameraView ? <><span>主摄像机画面</span><span>网格仅辅助 · 不进入导出</span></> : <><span>空白处左键旋转</span><span>右键平移</span><span>滚轮缩放</span></>}</div>
@@ -2073,11 +2148,11 @@ export default function App() {
             </div></div>
             {monitorMode !== 'minimized' && <div className="monitor-frame">
               <div className={`monitor-canvas ${previewAspectClass}`} style={{ '--preview-aspect': previewAspect }}>
-                <CameraPreview objects={animatedObjects} animationTime={currentFrame / fps} cameraData={displayCamera} lighting={lighting} backgroundCanvas={monitorReferenceBackground} onCanvasReady={canvas => { monitorCanvasRef.current = canvas }} />
+                <CameraPreview objects={animatedObjects} animationTime={currentFrame / fps} cameraData={displayCamera} cameraAspect={previewAspect} lighting={lighting} backgroundCanvas={monitorReferenceBackground} onCanvasReady={canvas => { monitorCanvasRef.current = canvas }} />
                 <span className="safe-frame" />
                 <span className="owner-watermark" aria-label="MONOFORM 品牌标识"><i><img src={BRAND_MARK_URL} alt="" /></i><b>MONOFORM</b></span>
                 <span className="monitor-timecode">{timecodeAtFrame(currentFrame, fps)}</span>
-                <span className="monitor-focal">{Math.round(displayCamera.focalLength)} mm · {displayCamera.aspectRatio || '16:9'}</span>
+                <span className="monitor-focal">{Math.round(displayCamera.focalLength)} mm · {aspectLabel(displayCamera.aspectRatio)}</span>
               </div>
             </div>}
           </div>
@@ -2087,6 +2162,7 @@ export default function App() {
           currentFrame={currentFrame}
           fps={fps}
           totalFrames={totalFrames}
+          onOpenSettings={() => setSettingsOpen(true)}
           onSeek={seekToFrame}
           playing={playing}
           onTogglePlay={togglePlayback}
@@ -2108,13 +2184,13 @@ export default function App() {
       </div>
       {capturingImage && (
         <div className="export-render-surface" style={{ width: exportDimensions.width, height: exportDimensions.height }} aria-hidden="true">
-          <CameraPreview objects={animatedObjects} animationTime={currentFrame / fps} cameraData={displayCamera} lighting={lighting} exportMode backgroundCanvas={exportReferenceBackground} onCanvasReady={canvas => { imageCaptureCanvasRef.current = canvas }} />
+          <CameraPreview objects={animatedObjects} animationTime={currentFrame / fps} cameraData={displayCamera} cameraAspect={exportDimensions.width / exportDimensions.height} lighting={lighting} exportMode backgroundCanvas={exportReferenceBackground} onCanvasReady={canvas => { imageCaptureCanvasRef.current = canvas }} />
         </div>
       )}
       {exporting && (
         <>
           <div className="export-render-surface" style={{ width: exportDimensions.width, height: exportDimensions.height }} aria-hidden="true">
-            <CameraPreview objects={animatedObjects} animationTime={currentFrame / fps} cameraData={displayCamera} lighting={lighting} exportMode backgroundCanvas={exportReferenceBackground} onCanvasReady={canvas => { exportCanvasRef.current = canvas }} />
+            <CameraPreview objects={animatedObjects} animationTime={currentFrame / fps} cameraData={displayCamera} cameraAspect={exportDimensions.width / exportDimensions.height} lighting={lighting} exportMode backgroundCanvas={exportReferenceBackground} onCanvasReady={canvas => { exportCanvasRef.current = canvas }} />
           </div>
           <div className="export-progress-overlay" role="status" aria-live="polite">
             <div className="export-progress-card">

@@ -1,12 +1,14 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import * as THREE from 'three'
+import { BVHLoader } from 'three/examples/jsm/loaders/BVHLoader.js'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 const MODEL_PATH = path.join(ROOT, 'public', 'models', 'xbot-animated.glb')
 const SOURCE_PATH = path.join(ROOT, 'scripts', 'assets', 'RobotExpressive.glb')
+const CMU_SOURCE_PATH = path.join(ROOT, 'scripts', 'assets', 'CMU_13_29.bvh')
 const FPS = 30
 
 globalThis.ProgressEvent ??= class ProgressEvent {
@@ -77,7 +79,33 @@ const BONE_MAP = {
 const SOURCE_CLIPS = [
   ['Sitting', 'sit'],
   ['Wave', 'wave'],
+  ['ThumbsUp', 'thumbs_up'],
 ]
+
+const BVH_BONE_MAP = {
+  mixamorigHips: 'Hips',
+  mixamorigSpine: 'LowerBack',
+  mixamorigSpine1: 'Spine',
+  mixamorigSpine2: 'Spine1',
+  mixamorigNeck: 'Neck1',
+  mixamorigHead: 'Head',
+  mixamorigLeftShoulder: 'LeftShoulder',
+  mixamorigLeftArm: 'LeftArm',
+  mixamorigLeftForeArm: 'LeftForeArm',
+  mixamorigLeftHand: 'LeftHand',
+  mixamorigRightShoulder: 'RightShoulder',
+  mixamorigRightArm: 'RightArm',
+  mixamorigRightForeArm: 'RightForeArm',
+  mixamorigRightHand: 'RightHand',
+  mixamorigLeftUpLeg: 'LeftUpLeg',
+  mixamorigLeftLeg: 'LeftLeg',
+  mixamorigLeftFoot: 'LeftFoot',
+  mixamorigLeftToeBase: 'LeftToeBase',
+  mixamorigRightUpLeg: 'RightUpLeg',
+  mixamorigRightLeg: 'RightLeg',
+  mixamorigRightFoot: 'RightFoot',
+  mixamorigRightToeBase: 'RightToeBase',
+}
 
 function arrayBufferFromFile(filePath) {
   const buffer = fs.readFileSync(filePath)
@@ -195,18 +223,85 @@ function retargetClip({ targetScene, targetMesh, targetBase, sourceScene, source
   return new THREE.AnimationClip(name, sourceClip.duration, keyframeTracks)
 }
 
+function retargetBvhClip({ targetScene, targetMesh, targetBase, sourceRoot, sourceBones, sourceBind, sourceClip, name }) {
+  const targetBones = targetMesh.skeleton.bones
+  const sourceByName = new Map(sourceBones.map(bone => [bone.name, bone]))
+  const targetHip = targetMesh.skeleton.getBoneByName('mixamorigHips')
+  const targetFeet = ['mixamorigLeftFoot', 'mixamorigRightFoot'].map(boneName => targetMesh.skeleton.getBoneByName(boneName))
+  const bindFootHeight = targetFeet.reduce((sum, foot) => sum + targetBase.get(foot.name).worldPosition.y, 0) / targetFeet.length
+  const tracks = new Map(Object.keys(BVH_BONE_MAP).map(boneName => [boneName, { times: [], values: [] }]))
+  const hipPositions = { times: [], values: [] }
+  const mixer = new THREE.AnimationMixer(sourceRoot)
+  const action = mixer.clipAction(sourceClip)
+  action.reset().setLoop(THREE.LoopOnce, 0)
+  action.clampWhenFinished = true
+  action.play()
+
+  const frameCount = Math.ceil(sourceClip.duration * FPS) + 1
+  for (let frame = 0; frame < frameCount; frame += 1) {
+    const time = Math.min(sourceClip.duration, frame / FPS)
+    mixer.setTime(time)
+    sourceRoot.updateMatrixWorld(true)
+    restoreBones(targetBones, targetBase, targetScene)
+
+    for (const targetBone of targetBones) {
+      const sourceName = BVH_BONE_MAP[targetBone.name]
+      if (!sourceName) continue
+      const sourceBone = sourceByName.get(sourceName)
+      const sourceRest = sourceBind.get(sourceName)
+      const targetRest = targetBase.get(targetBone.name)
+      if (!sourceBone || !sourceRest || !targetRest || !targetBone.parent) continue
+      const sourceWorld = sourceBone.getWorldQuaternion(new THREE.Quaternion())
+      const worldDelta = sourceWorld.multiply(sourceRest.worldQuaternion.clone().invert())
+      const desiredWorld = worldDelta.multiply(targetRest.worldQuaternion)
+      const parentWorld = targetBone.parent.getWorldQuaternion(new THREE.Quaternion())
+      targetBone.quaternion.copy(parentWorld.invert().multiply(desiredWorld)).normalize()
+      targetBone.updateMatrixWorld(true)
+    }
+
+    targetScene.updateMatrixWorld(true)
+    const currentFootHeight = targetFeet.reduce((sum, foot) => sum + foot.getWorldPosition(new THREE.Vector3()).y, 0) / targetFeet.length
+    const hipWorld = targetHip.getWorldPosition(new THREE.Vector3())
+    hipWorld.y += bindFootHeight - currentFootHeight
+    targetHip.position.copy(targetHip.parent.worldToLocal(hipWorld))
+    targetScene.updateMatrixWorld(true)
+
+    for (const [boneName, track] of tracks) {
+      const bone = targetMesh.skeleton.getBoneByName(boneName)
+      track.times.push(time)
+      pushQuaternion(track, bone.quaternion.clone())
+    }
+    hipPositions.times.push(time)
+    hipPositions.values.push(targetHip.position.x, targetHip.position.y, targetHip.position.z)
+  }
+
+  mixer.stopAllAction()
+  mixer.uncacheRoot(sourceRoot)
+  restoreBones(sourceBones, sourceBind, sourceRoot)
+  restoreBones(targetBones, targetBase, targetScene)
+  return new THREE.AnimationClip(name, sourceClip.duration, [
+    new THREE.VectorKeyframeTrack('mixamorigHips.position', hipPositions.times, hipPositions.values),
+    ...[...tracks].map(([boneName, track]) => new THREE.QuaternionKeyframeTrack(`${boneName}.quaternion`, track.times, track.values)),
+  ])
+}
+
 async function main() {
   const loader = new GLTFLoader()
   const target = await parseGlb(loader, arrayBufferFromFile(MODEL_PATH))
   const source = await parseGlb(loader, arrayBufferFromFile(SOURCE_PATH))
+  const cmu = new BVHLoader().parse(fs.readFileSync(CMU_SOURCE_PATH, 'utf8'))
+  const cmuRoot = new THREE.Group()
+  cmuRoot.add(cmu.skeleton.bones[0])
   const targetMesh = target.scene.getObjectByName('Beta_Surface')
   const sourceMesh = source.scene.getObjectByName('HandR_1')
   if (!targetMesh?.isSkinnedMesh || !sourceMesh?.isSkinnedMesh) throw new Error('Expected source or target skeleton was not found')
 
   target.scene.updateMatrixWorld(true)
   source.scene.updateMatrixWorld(true)
+  cmuRoot.updateMatrixWorld(true)
   const targetModelBind = snapshotBones(targetMesh.skeleton.bones)
   const sourceModelBind = snapshotBones(sourceMesh.skeleton.bones)
+  const cmuModelBind = snapshotBones(cmu.skeleton.bones)
   const idleClip = THREE.AnimationClip.findByName(target.animations, 'idle')
   const targetMixer = new THREE.AnimationMixer(target.scene)
   const idleAction = targetMixer.clipAction(idleClip)
@@ -234,6 +329,19 @@ async function main() {
       name,
     })
   })
+  // CMU subject 13, trial 29 contains a stable, forward-facing squat. Keep
+  // one complete down/up repetition so pose phases remain easy to audit.
+  const squatSource = THREE.AnimationUtils.subclip(cmu.clip, 'cmu_squat_source', Math.round(34.5 * 120), Math.round(37.5 * 120), 120)
+  generated.push(retargetBvhClip({
+    targetScene: target.scene,
+    targetMesh,
+    targetBase,
+    sourceRoot: cmuRoot,
+    sourceBones: cmu.skeleton.bones,
+    sourceBind: cmuModelBind,
+    sourceClip: squatSource,
+    name: 'squat',
+  }))
 
   const generatedNames = new Set([...generated.map(clip => clip.name), 'thumbs_up'])
   const animations = [...target.animations.filter(clip => !generatedNames.has(clip.name)), ...generated]

@@ -1242,7 +1242,7 @@ function EditorCameraReporter({ enabled, onChange }) {
   return null
 }
 
-function EditorScene({ objects, selectedId, activeJoint, onSelect, onJointSelect, transformMode, transformSpace, snapEnabled, groundRequest, onUpdateObject, cameraData, onUpdateCamera, editorCameraData, onEditorCameraChange, lighting, showGrid, focusRequest, referenceVisible = false, cameraView = false, animationTime = 0 }) {
+function EditorScene({ objects, selectedId, activeJoint, onSelect, onJointSelect, transformMode, transformSpace, snapEnabled, groundRequest, onUpdateObject, cameraData, cameraAspect, onUpdateCamera, editorCameraData, onEditorCameraChange, lighting, showGrid, focusRequest, referenceVisible = false, cameraView = false, animationTime = 0 }) {
   return (
     <>
       {!referenceVisible && <color attach="background" args={['#555653']} />}
@@ -1253,22 +1253,23 @@ function EditorScene({ objects, selectedId, activeJoint, onSelect, onJointSelect
       {objects.map(object => <SceneObject key={object.id} data={object} selected={selectedId === object.id} selectedId={selectedId} activeJoint={activeJoint} transformMode={transformMode} transformSpace={transformSpace} snapEnabled={snapEnabled} groundRequest={groundRequest} onSelect={onSelect} onJointSelect={onJointSelect} onUpdate={onUpdateObject} animationTime={animationTime} />)}
       {!cameraView && <CameraModel data={cameraData} selected={selectedId === CAMERA_ID} selectedId={selectedId} transformMode={transformMode} transformSpace={transformSpace} snapEnabled={snapEnabled} onSelect={onSelect} onUpdate={onUpdateCamera} />}
       <ContactShadows position={[0, 0.01, 0]} opacity={0.42} scale={18} blur={2.4} far={9} />
-      {cameraView ? <PreviewCameraController cameraData={cameraData} /> : <OrbitControls makeDefault target={editorCameraData?.target || [0, 1, 0]} minDistance={2} maxDistance={35} maxPolarAngle={Math.PI * 0.49} />}
+      {cameraView ? <PreviewCameraController cameraData={cameraData} cameraAspect={cameraAspect} /> : <OrbitControls makeDefault target={editorCameraData?.target || [0, 1, 0]} minDistance={2} maxDistance={35} maxPolarAngle={Math.PI * 0.49} />}
       <EditorCameraReporter enabled={!cameraView} onChange={onEditorCameraChange} />
       {!cameraView && <ViewFocusController request={focusRequest} />}
     </>
   )
 }
 
-function PreviewCameraController({ cameraData }) {
+function PreviewCameraController({ cameraData, cameraAspect }) {
   const { camera, size } = useThree()
   useFrame(() => {
     camera.position.fromArray(cameraData.position)
     camera.rotation.set(...cameraData.rotation, 'XYZ')
     const fov = THREE.MathUtils.radToDeg(2 * Math.atan(24 / (2 * cameraData.focalLength)))
-    if (Math.abs(camera.fov - fov) > 0.01 || camera.aspect !== size.width / size.height) {
+    const nextAspect = Number.isFinite(cameraAspect) && cameraAspect > 0 ? cameraAspect : size.width / Math.max(1, size.height)
+    if (Math.abs(camera.fov - fov) > 0.01 || Math.abs(camera.aspect - nextAspect) > 0.0001) {
       camera.fov = fov
-      camera.aspect = size.width / size.height
+      camera.aspect = nextAspect
       camera.updateProjectionMatrix()
     }
   })
@@ -1287,7 +1288,7 @@ function CanvasBackground({ canvas }) {
   return texture ? <primitive attach="background" object={texture} /> : <color attach="background" args={['#9b9c98']} />
 }
 
-function PreviewScene({ objects, cameraData, lighting, backgroundCanvas = null, animationTime = 0 }) {
+function PreviewScene({ objects, cameraData, cameraAspect, lighting, backgroundCanvas = null, animationTime = 0 }) {
   return (
     <>
       <CanvasBackground canvas={backgroundCanvas} />
@@ -1297,7 +1298,7 @@ function PreviewScene({ objects, cameraData, lighting, backgroundCanvas = null, 
       <Ground showGrid={false} showSurface={!backgroundCanvas} />
       {objects.map(object => <SceneObject key={object.id} data={object} animationTime={animationTime} preview />)}
       <ContactShadows position={[0, 0.01, 0]} opacity={0.35} scale={18} blur={2.2} far={9} />
-      <PreviewCameraController cameraData={cameraData} />
+      <PreviewCameraController cameraData={cameraData} cameraAspect={cameraAspect} />
     </>
   )
 }
@@ -1320,16 +1321,16 @@ export function MainViewport(props) {
   )
 }
 
-export function CameraPreview({ objects, cameraData, lighting, backgroundCanvas = null, animationTime = 0, onCanvasReady, exportMode = false }) {
+export function CameraPreview({ objects, cameraData, cameraAspect, lighting, backgroundCanvas = null, animationTime = 0, onCanvasReady, exportMode = false }) {
   return (
     <Canvas
       shadows="basic"
       dpr={exportMode ? 1 : [1, 1.5]}
-      camera={{ position: cameraData.position, fov: 40, near: 0.05, far: 200 }}
+      camera={{ position: cameraData.position, fov: 40, aspect: cameraAspect, near: 0.05, far: 200 }}
       gl={{ antialias: true, preserveDrawingBuffer: exportMode || Boolean(onCanvasReady), toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.9 }}
       onCreated={({ gl }) => onCanvasReady?.(gl.domElement)}
     >
-      <PreviewScene objects={objects} cameraData={cameraData} lighting={lighting} backgroundCanvas={backgroundCanvas} animationTime={animationTime} />
+      <PreviewScene objects={objects} cameraData={cameraData} cameraAspect={cameraAspect} lighting={lighting} backgroundCanvas={backgroundCanvas} animationTime={animationTime} />
     </Canvas>
   )
 }

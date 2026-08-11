@@ -4,32 +4,22 @@ title MONOFORM · 素形启动器
 cd /d "%~dp0"
 
 echo.
-echo 正在启动 MONOFORM...
+echo ========================================
+echo   MONOFORM · 素形白模预演工作台
+echo ========================================
 echo.
 
-where node >nul 2>nul
-if errorlevel 1 (
-  echo [错误] 未找到 Node.js，请先从 https://nodejs.org/ 安装。
-  pause
-  exit /b 1
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\launch-windows.ps1"
+set "MONOFORM_EXIT=%ERRORLEVEL%"
+
+if not "%MONOFORM_EXIT%"=="0" (
+  echo.
+  echo [启动未完成] 请查看上方错误信息。
+  echo 也可以直接使用在线版：
+  echo https://guiyi-xi.github.io/monoform-previs-studio/
 )
 
-if not exist "node_modules" (
-  echo 首次启动：正在安装运行依赖，请保持网络连接...
-  call npm install
-  if errorlevel 1 (
-    echo [错误] 依赖安装失败，请检查网络连接后重试。
-    pause
-    exit /b 1
-  )
-)
-
-echo 浏览器将自动打开。
-echo 使用期间请勿关闭此窗口；需要停止时可在这里按 Ctrl+C。
 echo.
-
-call npm run dev -- --host 127.0.0.1 --port 5173 --open
-
-echo.
-echo MONOFORM 已停止。
+echo 按任意键关闭窗口...
 pause
+exit /b %MONOFORM_EXIT%
