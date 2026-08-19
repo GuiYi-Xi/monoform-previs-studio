@@ -13,6 +13,37 @@ function Write-Step([string]$Message) {
   Write-Host "[MONOFORM] $Message" -ForegroundColor Cyan
 }
 
+function Get-FileSha256([string]$Path) {
+  $sha = New-Object System.Security.Cryptography.SHA256Managed
+  $stream = [System.IO.File]::OpenRead($Path)
+  try {
+    return ([System.BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '')
+  } finally {
+    $stream.Dispose()
+    $sha.Dispose()
+  }
+}
+
+function Download-File([string]$Url, [string]$Destination) {
+  $webRequest = Get-Command Invoke-WebRequest -ErrorAction SilentlyContinue
+  if ($webRequest) {
+    Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $Destination
+    return
+  }
+  $client = New-Object System.Net.WebClient
+  try { $client.DownloadFile($Url, $Destination) } finally { $client.Dispose() }
+}
+
+function Expand-Zip([string]$Archive, [string]$Destination) {
+  $expandCommand = Get-Command Expand-Archive -ErrorAction SilentlyContinue
+  if ($expandCommand) {
+    Expand-Archive -LiteralPath $Archive -DestinationPath $Destination -Force
+    return
+  }
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  [System.IO.Compression.ZipFile]::ExtractToDirectory($Archive, $Destination)
+}
+
 function Test-NodeCompatible([string]$NodeExecutable) {
   if (-not $NodeExecutable -or -not (Test-Path -LiteralPath $NodeExecutable)) { return $false }
   try {
@@ -43,7 +74,7 @@ function Install-PortableNode {
   foreach ($url in $downloadUrls) {
     try {
       Write-Step "Downloading portable runtime ($RequiredNodeVersion / $architecture)..."
-      Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $archivePath
+      Download-File $url $archivePath
       $downloaded = $true
       break
     } catch {
@@ -56,7 +87,7 @@ function Install-PortableNode {
   if (Test-Path -LiteralPath $extractRoot) { Remove-Item -LiteralPath $extractRoot -Recurse -Force }
   if (Test-Path -LiteralPath $PortableNodeRoot) { Remove-Item -LiteralPath $PortableNodeRoot -Recurse -Force }
   New-Item -ItemType Directory -Force -Path $extractRoot | Out-Null
-  Expand-Archive -LiteralPath $archivePath -DestinationPath $extractRoot -Force
+  Expand-Zip $archivePath $extractRoot
   Move-Item -LiteralPath (Join-Path $extractRoot $folderName) -Destination $PortableNodeRoot
   Remove-Item -LiteralPath $extractRoot -Recurse -Force
   Remove-Item -LiteralPath $archivePath -Force
@@ -68,12 +99,16 @@ try {
   New-Item -ItemType Directory -Force -Path $RuntimeRoot | Out-Null
 
   $systemNode = Get-Command node.exe -ErrorAction SilentlyContinue
-  $nodeExecutable = if ($systemNode) { $systemNode.Source } else { $null }
+  $nodeExecutable = if ($systemNode) {
+    if ($systemNode.Path) { $systemNode.Path } elseif ($systemNode.Definition) { $systemNode.Definition } else { $systemNode.Source }
+  } else { $null }
   $npmExecutable = $null
 
   if (Test-NodeCompatible $nodeExecutable) {
     $systemNpm = Get-Command npm.cmd -ErrorAction SilentlyContinue
-    if ($systemNpm) { $npmExecutable = $systemNpm.Source }
+    if ($systemNpm) {
+      $npmExecutable = if ($systemNpm.Path) { $systemNpm.Path } elseif ($systemNpm.Definition) { $systemNpm.Definition } else { $systemNpm.Source }
+    }
   }
 
   if (-not $npmExecutable) {
@@ -86,8 +121,8 @@ try {
   $env:Path = "$(Split-Path -Parent $nodeExecutable);$env:Path"
   $lockFile = Join-Path $ProjectRoot 'package-lock.json'
   $dependencyStamp = Join-Path $RuntimeRoot 'dependencies.sha256'
-  $lockHash = (Get-FileHash -LiteralPath $lockFile -Algorithm SHA256).Hash
-  $savedHash = if (Test-Path -LiteralPath $dependencyStamp) { (Get-Content -LiteralPath $dependencyStamp -Raw).Trim() } else { '' }
+  $lockHash = Get-FileSha256 $lockFile
+  $savedHash = if (Test-Path -LiteralPath $dependencyStamp) { ((Get-Content -LiteralPath $dependencyStamp | Out-String).Trim()) } else { '' }
   $needsDependencies = -not (Test-Path -LiteralPath (Join-Path $ProjectRoot 'node_modules')) -or $savedHash -ne $lockHash
 
   if ($needsDependencies) {
