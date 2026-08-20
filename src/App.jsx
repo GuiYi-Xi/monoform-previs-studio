@@ -130,6 +130,30 @@ const normalizeInterpolation = value => ['smooth', 'linear', 'hold'].includes(va
 const segmentAmount = (key, amount) => key?.interpolation === 'hold' ? 0 : key?.interpolation === 'linear' ? amount : ease(amount)
 const POSE_LABELS = Object.fromEntries(RIG_PRESET_OPTIONS)
 const poseLabel = pose => POSE_LABELS[normalizePoseId(pose)] || '自定义动作'
+const normalizeFrameNumber = value => {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : 0
+}
+
+function uniqueSortedKeyframes(keys) {
+  const byFrame = new Map()
+  keys.forEach(key => byFrame.set(key.frame, key))
+  return [...byFrame.values()].sort((a, b) => a.frame - b.frame)
+}
+
+function clampKeyframeFrames(keys, maxFrame) {
+  return uniqueSortedKeyframes((Array.isArray(keys) ? keys : []).map(key => ({
+    ...key,
+    frame: clamp(normalizeFrameNumber(key?.frame), 0, maxFrame),
+  })))
+}
+
+function keyframeMaxFrame(cameraKeys = [], objectTracks = {}) {
+  const cameraFrames = Array.isArray(cameraKeys) ? cameraKeys.map(key => normalizeFrameNumber(key?.frame)) : []
+  const objectFrames = Object.values(objectTracks || {})
+    .flatMap(track => Array.isArray(track) ? track.map(key => normalizeFrameNumber(key?.frame)) : [])
+  return Math.max(0, ...cameraFrames, ...objectFrames)
+}
 
 function finiteVector3(value, fallback) {
   return Array.isArray(value) && value.length >= 3
@@ -165,10 +189,11 @@ function normalizeCamera(camera = {}) {
 }
 
 function normalizeCameraKeyframes(keys = [], fallbackCamera = initialCamera) {
-  return (keys || []).map(key => {
+  const source = Array.isArray(keys) ? keys.filter(Boolean) : []
+  return uniqueSortedKeyframes(source.map(key => {
     const position = finiteVector3(key.position, fallbackCamera.position)
     return {
-      frame: Math.max(0, Math.round(Number(key.frame) || 0)),
+      frame: normalizeFrameNumber(key.frame),
       interpolation: normalizeInterpolation(key.interpolation),
       position,
       rotation: Array.isArray(key.rotation)
@@ -176,7 +201,7 @@ function normalizeCameraKeyframes(keys = [], fallbackCamera = initialCamera) {
         : cameraRotationToward(position, key.target || LEGACY_DEFAULT_CAMERA_TARGET),
       focalLength: clamp(Number(key.focalLength) || fallbackCamera.focalLength, 18, 120),
     }
-  })
+  }))
 }
 
 function normalizeReference(reference = {}) {
@@ -266,10 +291,12 @@ function readCustomPoses() {
 }
 
 function normalizeObjectTracks(tracks = {}) {
-  return Object.fromEntries(Object.entries(tracks).map(([id, keys]) => [id, (keys || []).map(key => {
+  if (!tracks || typeof tracks !== 'object') return {}
+  return Object.fromEntries(Object.entries(tracks).map(([id, keys]) => [id, uniqueSortedKeyframes((Array.isArray(keys) ? keys.filter(Boolean) : []).map(key => {
     const pose = normalizePoseId(key.pose)
     return {
       ...key,
+      frame: normalizeFrameNumber(key.frame),
       interpolation: normalizeInterpolation(key.interpolation),
       pose,
       poseTime: Number.isFinite(key.poseTime) ? key.poseTime : presetPhase(pose),
@@ -277,7 +304,7 @@ function normalizeObjectTracks(tracks = {}) {
       rigRoot: Array.isArray(key.rigRoot) ? key.rigRoot.slice(0, 3).map(value => Number(value) || 0) : [0, 0, 0],
       joints: cloneJointPose(key.joints),
     }
-  })]))
+  }))]))
 }
 
 const cloneProjectValue = value => JSON.parse(JSON.stringify(value))
@@ -298,15 +325,20 @@ function uniqueShotName(shots, preferred) {
 function normalizeShot(shot, index, fallback) {
   const objects = (Array.isArray(shot?.objects) ? shot.objects : fallback.objects).map(normalizePerson)
   const camera = normalizeCamera(shot?.camera || fallback.camera)
-  const keyframes = normalizeCameraKeyframes(shot?.keyframes ?? fallback.keyframes ?? [], camera)
-  const objectKeyframes = normalizeObjectTracks(shot?.objectKeyframes || shot?.characterKeyframes || fallback.objectKeyframes || {})
+  let keyframes = normalizeCameraKeyframes(shot?.keyframes ?? fallback.keyframes ?? [], camera)
+  let objectKeyframes = normalizeObjectTracks(shot?.objectKeyframes || shot?.characterKeyframes || fallback.objectKeyframes || {})
   const timing = normalizeProjectSettings({
     fps: shot?.fps ?? shot?.settings?.fps ?? fallback.settings.fps,
     durationSeconds: shot?.durationSeconds ?? shot?.settings?.durationSeconds ?? fallback.settings.durationSeconds,
     loopPlayback: shot?.loopPlayback ?? shot?.settings?.loopPlayback ?? fallback.settings.loopPlayback,
   })
-  const maxFrame = Math.max(0, ...keyframes.map(key => key.frame), ...Object.values(objectKeyframes).flatMap(track => (track || []).map(key => key.frame)))
+  const maxFrame = keyframeMaxFrame(keyframes, objectKeyframes)
   if (maxFrame > timing.fps * timing.durationSeconds) timing.durationSeconds = clamp(Math.ceil(maxFrame / timing.fps), 1, 60)
+  const supportedMaxFrame = timing.fps * timing.durationSeconds
+  if (maxFrame > supportedMaxFrame) {
+    keyframes = clampKeyframeFrames(keyframes, supportedMaxFrame)
+    objectKeyframes = Object.fromEntries(Object.entries(objectKeyframes).map(([id, track]) => [id, clampKeyframeFrames(track, supportedMaxFrame)]))
+  }
   return {
     id: String(shot?.id || `shot-${uid()}`),
     name: String(shot?.name || defaultShotName(index)).trim().slice(0, 30) || defaultShotName(index),
@@ -387,7 +419,7 @@ function readCachedProject() {
     const data = JSON.parse(serialized || 'null')
     const normalized = normalizeProjectData(data)
     if (!normalized) return null
-    if (!current && legacy) localStorage.setItem(PROJECT_STORAGE_KEY, legacy)
+    if (!current && legacy) localStorage.setItem(PROJECT_STORAGE_KEY, JSON.stringify(normalized))
     return normalized
   } catch {
     return null
@@ -814,9 +846,12 @@ function Inspector({ selected, camera, selectedJoint, customPoses, onSelectJoint
   )
 }
 
-function ProjectSettingsDialog({ settings, onApply, onClose }) {
+function ProjectSettingsDialog({ settings, maxKeyframeFrame = 0, onApply, onClose }) {
   const [draft, setDraft] = useState(settings)
   const totalFrames = Number(draft.fps) * Number(draft.durationSeconds)
+  const safeMaxKeyframeFrame = normalizeFrameNumber(maxKeyframeFrame)
+  const requiredSeconds = Math.max(1, Math.ceil(safeMaxKeyframeFrame / (Number(draft.fps) || DEFAULT_PROJECT_SETTINGS.fps)))
+  const hasDurationConflict = Number.isFinite(totalFrames) && totalFrames < safeMaxKeyframeFrame
   const submit = event => {
     event.preventDefault()
     onApply(normalizeProjectSettings(draft))
@@ -834,7 +869,12 @@ function ProjectSettingsDialog({ settings, onApply, onClose }) {
             <label><span>帧率</span><select value={draft.fps} onChange={event => setDraft(current => ({ ...current, fps: Number(event.target.value) }))}>{FPS_OPTIONS.map(value => <option value={value} key={value}>{value} FPS</option>)}</select></label>
             <label><span>时间轴总时长</span><div className="duration-input"><input type="number" min="1" max="60" step="1" value={draft.durationSeconds} onChange={event => setDraft(current => ({ ...current, durationSeconds: event.target.value }))} /><i>秒</i></div></label>
           </div>
-          <div className="settings-summary"><span>关键帧条范围</span><strong>0–{Number.isFinite(totalFrames) ? totalFrames : 0} 帧</strong><small>{draft.fps || 0} FPS · 导出 MP4 将严格使用此时长</small></div>
+          <div className={`settings-summary ${hasDurationConflict ? 'is-warning' : ''}`}>
+            <span>关键帧条范围</span>
+            <strong>0–{Number.isFinite(totalFrames) ? totalFrames : 0} 帧</strong>
+            <small>{safeMaxKeyframeFrame ? `最后关键帧：第 ${safeMaxKeyframeFrame} 帧 · 当前帧率最短 ${requiredSeconds} 秒` : `${draft.fps || 0} FPS · 导出 MP4 将严格使用此时长`}</small>
+          </div>
+          {hasDurationConflict && <p className="settings-warning">当前时长放不下已有关键帧，请至少设置为 {requiredSeconds} 秒，或先删除/移动末尾关键帧。</p>}
           <label className="settings-toggle"><input type="checkbox" checked={Boolean(draft.loopPlayback)} onChange={event => setDraft(current => ({ ...current, loopPlayback: event.target.checked }))} /><span><strong>循环播放</strong><small>到达镜头结尾后自动从第 0 帧继续</small></span></label>
         </div>
         <div className="settings-dialog-actions"><button type="button" onClick={onClose}>取消</button><button type="submit">应用设置</button></div>
@@ -1258,7 +1298,7 @@ export default function App() {
     keyframes,
     objectKeyframes: characterKeyframes,
   } : shot), [activeShotId, camera, characterKeyframes, keyframes, lighting, objects, reference, settings.durationSeconds, settings.fps, settings.loopPlayback, shots])
-  const maxKeyframeFrame = useMemo(() => Math.max(0, ...keyframes.map(key => key.frame), ...Object.values(characterKeyframes).flatMap(track => (track || []).map(key => key.frame))), [characterKeyframes, keyframes])
+  const maxKeyframeFrame = useMemo(() => keyframeMaxFrame(keyframes, characterKeyframes), [characterKeyframes, keyframes])
   const selectedKeyframeInfo = useMemo(() => {
     if (!selectedKeyframe) return null
     const track = selectedKeyframe.kind === 'camera' ? keyframes : characterKeyframes[selectedKeyframe.trackId]
@@ -1504,8 +1544,10 @@ export default function App() {
   const applySettings = nextSettings => {
     const next = normalizeProjectSettings(nextSettings)
     const nextTotalFrames = next.fps * next.durationSeconds
-    if (nextTotalFrames < maxKeyframeFrame) {
-      setToast(`时间轴至少要保留到第 ${maxKeyframeFrame} 帧，请延长镜头时长`)
+    const lastKeyframeFrame = normalizeFrameNumber(maxKeyframeFrame)
+    if (nextTotalFrames < lastKeyframeFrame) {
+      const requiredSeconds = Math.max(1, Math.ceil(lastKeyframeFrame / next.fps))
+      setToast(`最后关键帧在第 ${lastKeyframeFrame} 帧，时长至少 ${requiredSeconds} 秒`)
       return
     }
     setPlaying(false)
@@ -2202,7 +2244,7 @@ export default function App() {
           </div>
         </>
       )}
-      {settingsOpen && <ProjectSettingsDialog settings={settings} onApply={applySettings} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <ProjectSettingsDialog settings={settings} maxKeyframeFrame={maxKeyframeFrame} onApply={applySettings} onClose={() => setSettingsOpen(false)} />}
       {toast && <div className="toast"><span />{toast}</div>}
     </main>
   )

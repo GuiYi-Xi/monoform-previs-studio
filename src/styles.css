@@ -439,9 +439,11 @@ button:disabled { opacity: .28; cursor: not-allowed !important; }
 .duration-input input { padding-right: 30px !important; }
 .duration-input i { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--text-faint); font-style: normal; font-size: 9px; pointer-events: none; }
 .settings-summary { min-height: 55px; padding: 9px 11px; display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto; align-items: center; border: 1px solid var(--line-soft); border-radius: 5px; background: #1d1d1b; }
+.settings-summary.is-warning { border-color: #a8693d; background: #251d18; }
 .settings-summary span, .settings-summary small { color: var(--text-faint); font-size: 8px; }
 .settings-summary strong { color: var(--accent); font-family: "Cascadia Mono", monospace; font-size: 11px; }
 .settings-summary small { grid-column: 1 / -1; }
+.settings-warning { margin: -5px 0 0; color: #e0a572; font-size: 8px; line-height: 1.55; }
 .settings-toggle { min-height: 52px; padding: 9px 11px; display: flex; align-items: center; gap: 10px; border: 1px solid var(--line-soft); border-radius: 5px; background: #292926; cursor: pointer; }
 .settings-toggle input { accent-color: var(--accent); }
 .settings-toggle span { display: flex; flex-direction: column; gap: 3px; }
