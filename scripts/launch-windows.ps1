@@ -145,8 +145,30 @@ try {
   }
 
   Write-Step 'Opening the browser. Keep this window open; press Ctrl+C to stop.'
-  & $npmExecutable 'run' 'dev' '--' '--host=127.0.0.1' '--port=5173' '--open'
-  if ($LASTEXITCODE -ne 0) { throw "Local server stopped unexpectedly (exit code $LASTEXITCODE)." }
+  $aiServer = $null
+  $aiServerScript = Join-Path $ProjectRoot 'server\server.py'
+  $modelKeyFile = 'F:\hermes-sceneTo 3d\model-key.txt'
+  if (Test-Path -LiteralPath $aiServerScript) {
+    $pythonCommand = Get-Command python.exe -ErrorAction SilentlyContinue
+    $hasModelConfig = (Test-Path -LiteralPath $modelKeyFile) -or (Test-Path -LiteralPath (Join-Path $ProjectRoot 'server\model-config.local.json'))
+    if ($pythonCommand -and $hasModelConfig) {
+      $health = $false
+      try { $health = ((Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8891/api/health' -TimeoutSec 2).StatusCode -eq 200) } catch { }
+      if (-not $health) {
+        $env:MONOFORM_MODEL_KEY_FILE = $modelKeyFile
+        $aiServer = Start-Process -FilePath $pythonCommand.Source -ArgumentList @('-u', $aiServerScript) -WorkingDirectory $ProjectRoot -PassThru -WindowStyle Hidden
+        Start-Sleep -Seconds 1
+      }
+    } else {
+      Write-Host 'AI scene generation unavailable: Python or a local model configuration was not found. Editor still works.' -ForegroundColor Yellow
+    }
+  }
+  try {
+    & $npmExecutable 'run' 'dev' '--' '--host=127.0.0.1' '--port=5173' '--open'
+    if ($LASTEXITCODE -ne 0) { throw "Local server stopped unexpectedly (exit code $LASTEXITCODE)." }
+  } finally {
+    if ($aiServer -and -not $aiServer.HasExited) { Stop-Process -Id $aiServer.Id -Force }
+  }
   exit 0
 } catch {
   Write-Host ''

@@ -5,3 +5,7 @@ dist/
 output/
 *.log
 api.txt
+server/model-config.local.json
+server/__pycache__/
+qa-baseline-before-camera-relative/
+NUL
