@@ -223,3 +223,9 @@ AI 配置文件 `server/model-config.local.json` 已被 Git 忽略。不要把 A
 ## 12. 教学视频
 
 [播放或下载 MONOFORM 教学录屏](https://guiyi-xi.github.io/monoform-previs-studio/tutorial/monoform-getting-started.mp4)
+
+## 13. 启动时检查更新
+
+从 Git 克隆的项目目录启动 `启动白模工具.cmd` 时，启动器会检查原项目 `main` 分支是否有新提交。只有远程检查成功、当前目录没有未提交改动且检测到新版本时，才会弹出是否更新的确认框。确认后会执行 `git pull --ff-only`，完成后自动重启；拒绝更新或检查失败都会继续打开当前版本。
+
+通过 GitHub `Download ZIP` 获得的目录没有 Git 历史，不能自动拉取更新，需要重新下载最新 ZIP。

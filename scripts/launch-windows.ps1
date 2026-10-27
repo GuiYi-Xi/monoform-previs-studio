@@ -1,4 +1,4 @@
-param(
+﻿param(
   [switch]$SetupOnly
 )
 
@@ -8,6 +8,8 @@ $RuntimeRoot = Join-Path $ProjectRoot '.monoform-runtime'
 $PortableNodeRoot = Join-Path $RuntimeRoot 'node'
 $RequiredNodeVersion = 'v22.15.0'
 $OnlineUrl = 'https://guiyi-xi.github.io/monoform-previs-studio/'
+$RepositoryUrl = 'https://github.com/GuiYi-Xi/monoform-previs-studio.git'
+$RepositoryBranch = 'main'
 
 function Write-Step([string]$Message) {
   Write-Host "[MONOFORM] $Message" -ForegroundColor Cyan
@@ -94,9 +96,102 @@ function Install-PortableNode {
   Write-Step 'Portable runtime is ready.'
 }
 
+function Get-GitValue([string[]]$Arguments) {
+  try {
+    $value = & git.exe @Arguments 2>$null
+    if ($LASTEXITCODE -ne 0) { return $null }
+    return (($value | Out-String).Trim())
+  } catch {
+    return $null
+  }
+}
+
+function Show-UpdatePrompt([string]$LocalCommit, [string]$RemoteCommit) {
+  $message = "MONOFORM 检测到项目有新版本。`n`n本地版本：$($LocalCommit.Substring(0, [Math]::Min(7, $LocalCommit.Length)))`n远程版本：$($RemoteCommit.Substring(0, [Math]::Min(7, $RemoteCommit.Length)))`n`n是否现在拉取更新并重启工作台？"
+  try {
+    Add-Type -AssemblyName System.Windows.Forms
+    $answer = [System.Windows.Forms.MessageBox]::Show($message, 'MONOFORM 项目更新', [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Information)
+    return $answer -eq [System.Windows.Forms.DialogResult]::Yes
+  } catch {
+    Write-Host $message -ForegroundColor Yellow
+    $answer = Read-Host '输入 Y 确认更新，其他输入跳过'
+    return $answer -match '^(y|yes)$'
+  }
+}
+
+function Test-AndApplyProjectUpdate {
+  $gitCommand = Get-Command git.exe -ErrorAction SilentlyContinue
+  if (-not $gitCommand -or -not (Test-Path -LiteralPath (Join-Path $ProjectRoot '.git'))) {
+    Write-Host 'Update check skipped: this folder is not a Git checkout.' -ForegroundColor DarkYellow
+    return $false
+  }
+
+  $branch = Get-GitValue @('-C', $ProjectRoot, 'branch', '--show-current')
+  if ($branch -ne $RepositoryBranch) {
+    Write-Host "Update check skipped: current branch is '$branch'; expected '$RepositoryBranch'." -ForegroundColor DarkYellow
+    return $false
+  }
+
+  try {
+    $dirty = & git.exe '-C' $ProjectRoot 'status' '--porcelain' 2>$null
+    $gitStatusCode = $LASTEXITCODE
+  } catch {
+    $dirty = $null
+    $gitStatusCode = 1
+  }
+  if ($gitStatusCode -ne 0 -or $dirty) {
+    Write-Host 'Update check skipped: local files have uncommitted changes.' -ForegroundColor DarkYellow
+    return $false
+  }
+
+  $remoteUrl = Get-GitValue @('-C', $ProjectRoot, 'remote', 'get-url', 'origin')
+  if (-not $remoteUrl -or $remoteUrl.TrimEnd('/') -ne $RepositoryUrl.TrimEnd('/')) {
+    Write-Host 'Update check skipped: origin is not the MONOFORM project repository.' -ForegroundColor DarkYellow
+    return $false
+  }
+
+  Write-Step 'Checking for project updates...'
+  $localCommit = Get-GitValue @('-C', $ProjectRoot, 'rev-parse', 'HEAD')
+  $remoteLine = Get-GitValue @('-C', $ProjectRoot, 'ls-remote', 'origin', "refs/heads/$RepositoryBranch")
+  if (-not $localCommit -or -not $remoteLine) {
+    Write-Host 'Update check failed; continuing with the current version.' -ForegroundColor Yellow
+    return $false
+  }
+  $remoteCommit = ($remoteLine -split '\s+')[0]
+  if ($remoteCommit -notmatch '^[0-9a-f]{40}$' -or $remoteCommit -eq $localCommit) {
+    Write-Step 'Project is up to date.'
+    return $false
+  }
+
+  if (-not (Show-UpdatePrompt $localCommit $remoteCommit)) {
+    Write-Step 'Update skipped by user.'
+    return $false
+  }
+
+  Write-Step 'Pulling the confirmed project update...'
+  try {
+    & git.exe '-C' $ProjectRoot 'pull' '--ff-only' 'origin' $RepositoryBranch
+    $pullStatusCode = $LASTEXITCODE
+  } catch {
+    $pullStatusCode = 1
+  }
+  if ($pullStatusCode -ne 0) {
+    Write-Host 'Update failed; continuing with the current files.' -ForegroundColor Yellow
+    return $false
+  }
+  Write-Step 'Project update applied. Restarting the launcher...'
+  $powershell = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh.exe' } else { 'powershell.exe' }
+  $arguments = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath)
+  if ($SetupOnly) { $arguments += '-SetupOnly' }
+  Start-Process -FilePath $powershell -ArgumentList $arguments -WorkingDirectory $ProjectRoot
+  return $true
+}
+
 try {
   Set-Location -LiteralPath $ProjectRoot
   New-Item -ItemType Directory -Force -Path $RuntimeRoot | Out-Null
+
+  if (Test-AndApplyProjectUpdate) { exit 0 }
 
   $systemNode = Get-Command node.exe -ErrorAction SilentlyContinue
   $nodeExecutable = if ($systemNode) {
