@@ -1206,15 +1206,20 @@ function CameraAnglePanel({ camera, onChange, onClose, onLevel }) {
   )
 }
 
-function CameraKeyframeEditor({ keyframe, objects = [], onChange }) {
+function CameraKeyframeEditor({ keyframe, objects = [], totalFrames = 0, onChange, onClose }) {
   if (!keyframe) return null
   const followEnabled = keyframe.followEnabled === true
   const targetId = keyframe.followTargetId || objects.find(object => object.type === 'person')?.id || ''
   const followShot = keyframe.followShot || keyframe.shot || 'medium'
   const preset = shotPreset(followShot)
   const update = patch => onChange?.(patch)
-  return <div className="camera-key-editor" aria-label="镜头关键帧参数">
-    <div className="camera-key-editor-title">镜头关键帧参数</div>
+  // Anchor the popover on the keyframe it edits: the parent slot maps 0-100% to the track.
+  const anchor = totalFrames > 0 ? clamp((Number(keyframe.frame) || 0) / totalFrames, 0, 1) : 0
+  return <div className="camera-key-editor" style={{ '--anchor': `${anchor * 100}%` }} aria-label="镜头关键帧参数">
+    <div className="camera-key-editor-title">
+      <span>镜头关键帧参数 · 第 {keyframe.frame} 帧</span>
+      <button type="button" onClick={onClose} title="收起关键帧参数" aria-label="收起关键帧参数"><ChevronDown size={12} /></button>
+    </div>
     <label className="settings-toggle"><input type="checkbox" checked={followEnabled} onChange={event => update(event.target.checked ? { followEnabled: true, followTargetId: targetId, followShot, followDistance: keyframe.followDistance ?? preset.distance, followHeight: keyframe.followHeight ?? preset.height, followLookHeight: keyframe.followLookHeight ?? preset.lookHeight, followOffset: keyframe.followOffset || [0, preset.height, preset.distance], followOrbitDegrees: keyframe.followOrbitDegrees ?? 0, followSideOffset: keyframe.followSideOffset ?? 0 } : { followEnabled: false, followTargetId: '', followShot: null })} /><span><strong>{followEnabled ? '跟随模式' : '固定镜头'}</strong><small>此状态只影响当前关键帧</small></span></label>
     <label className="select-field"><span>景别</span><select value={followEnabled ? followShot : (keyframe.shot || 'medium')} onChange={event => { const shot = event.target.value; const next = shotPreset(shot); update(followEnabled ? { followShot: shot, shot, followDistance: next.distance, followHeight: next.height, followLookHeight: next.lookHeight, focalLength: next.focalLength } : { shot, focalLength: next.focalLength }) }}>{Object.entries(CAMERA_SHOT_PRESETS).map(([value, item]) => <option key={value} value={value}>{item.label}</option>)}</select></label>
     {followEnabled && <>
@@ -1231,6 +1236,11 @@ function CameraKeyframeEditor({ keyframe, objects = [], onChange }) {
 function Timeline({ currentFrame, fps, totalFrames, objects = [], onChangeCameraKeyframe, onOpenSettings, onSeek, playing, onTogglePlay, keyframes, onAddKeyframe, onDeleteKeyframe, objectTrack, onAddObjectKeyframe, onDeleteObjectKeyframe, selectedKeyframe, onSelectKeyframe, onMoveKeyframe, onCopyKeyframe, onPasteKeyframe, onDeleteSelectedKeyframe, onChangeInterpolation, hasClipboard }) {
   const [dragging, setDragging] = useState(null)
   const rulerFrames = useMemo(() => [...new Set(Array.from({ length: 6 }, (_, index) => Math.round(totalFrames * index / 5)))], [totalFrames])
+  const selectedCameraKeyframe = useMemo(() => (
+    selectedKeyframe?.kind === 'camera'
+      ? keyframes.find(key => key.frame === selectedKeyframe.frame) || null
+      : null
+  ), [keyframes, selectedKeyframe])
   const scrub = useCallback((event, rect) => {
     onSeek(Math.round(clamp((event.clientX - rect.left) / rect.width, 0, 1) * totalFrames))
   }, [onSeek, totalFrames])
@@ -1304,8 +1314,7 @@ function Timeline({ currentFrame, fps, totalFrames, objects = [], onChangeCamera
         <div className="ruler timeline-ruler">{rulerFrames.map(frame => <span key={frame} style={{ left: `${frame / totalFrames * 100}%` }}>{frame}</span>)}</div>
         <button type="button" className="timeline-settings-button" onClick={onOpenSettings} title="设置时间轴时长和帧率"><Settings2 size={12} /> 时间轴设置</button>
         <div className="track-label camera-track-label"><Camera size={13} /><span>主摄像机</span></div>
-        <div className="camera-track-slot">{renderTrack(keyframes, 'camera', onDeleteKeyframe)}</div>
-        <CameraKeyframeEditor keyframe={selectedKeyframe?.kind === 'camera' ? keyframes.find(key => key.frame === selectedKeyframe.frame) : null} objects={objects} onChange={onChangeCameraKeyframe} />
+        <div className="camera-track-slot">{renderTrack(keyframes, 'camera', onDeleteKeyframe)}<CameraKeyframeEditor keyframe={selectedCameraKeyframe} objects={objects} totalFrames={totalFrames} onChange={onChangeCameraKeyframe} onClose={() => onSelectKeyframe(null)} /></div>
         <button className="keyframe-button camera-keyframe-button" onClick={onAddKeyframe}><Plus size={13} /> 镜头关键帧</button>
         {objectTrack && (
           <>
@@ -2338,8 +2347,12 @@ export default function App() {
   }
   const changeSelectedCameraKey = patch => {
     if (!selectedKeyframeInfo || selectedKeyframeInfo.kind !== 'camera') return
-    setKeyframes(list => list.map(key => key.frame === selectedKeyframeInfo.frame ? { ...key, ...patch } : key))
-    setCurrentFrame(selectedKeyframeInfo.frame)
+    const frame = selectedKeyframeInfo.frame
+    const nextKeyframes = keyframes.map(key => key.frame === frame ? { ...key, ...patch } : key)
+    setKeyframes(nextKeyframes)
+    setCurrentFrame(frame)
+    // Keep the viewport and camera monitor on the keyframe being edited, exactly like seeking.
+    setCamera(cameraAtFrame(nextKeyframes, frame, camera.aspectRatio))
   }
   const deleteSelectedKeyframe = () => {
     if (!selectedKeyframeInfo) return

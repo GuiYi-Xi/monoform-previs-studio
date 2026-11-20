@@ -380,7 +380,21 @@ button:disabled { opacity: .28; cursor: not-allowed !important; }
 .timeline-settings-button { grid-column: 3; grid-row: 1; height: 24px; align-self: start; display: flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid var(--line); border-radius: 4px; background: #292926; color: var(--text-dim); font-size: 8px; cursor: pointer; }
 .timeline-settings-button:hover { border-color: #5a5342; color: var(--accent); }
 .camera-track-label { grid-column: 1; grid-row: 2; }
-.camera-track-slot { grid-column: 2; grid-row: 2; min-width: 0; }
+.camera-track-slot { grid-column: 2; grid-row: 2; min-width: 0; position: relative; }
+.camera-key-editor { position: absolute; z-index: 14; bottom: calc(100% + 34px); left: clamp(0px, calc(var(--anchor, 0%) - 134px), calc(100% - 268px)); width: 268px; max-height: min(340px, 56vh); overflow: auto; padding: 8px 9px 9px; display: grid; gap: 7px; border: 1px solid rgba(255,255,255,.12); border-radius: 7px; background: rgba(33,33,31,.97); box-shadow: 0 16px 40px rgba(0,0,0,.44); scrollbar-width: thin; scrollbar-color: #555248 transparent; animation: camera-key-editor-in 140ms ease-out; }
+/* 34px = 28px 标尺行 + 5px 行间距 + 1px，让浮层落在时间轴上方而不是压住刻度与轨道 */
+@keyframes camera-key-editor-in { from { opacity: 0; transform: translateY(5px); } }
+.camera-key-editor-title { display: flex; align-items: center; justify-content: space-between; gap: 6px; color: var(--accent); font-size: 8px; letter-spacing: .04em; }
+.camera-key-editor-title > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.camera-key-editor-title > button { flex: 0 0 auto; width: 18px; height: 18px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 3px; background: transparent; color: var(--text-faint); cursor: pointer; }
+.camera-key-editor-title > button:hover { background: rgba(255,255,255,.08); color: var(--text); }
+.camera-key-editor .settings-toggle { min-height: 36px; padding: 5px 7px; gap: 7px; }
+.camera-key-editor .settings-toggle strong { font-size: 9px; }
+.camera-key-editor .settings-toggle small { font-size: 7px; }
+.camera-key-editor .select-field { min-height: 0; margin-bottom: 0; grid-template-columns: 50px 1fr; gap: 6px; font-size: 8px; }
+.camera-key-editor .select-field select { height: 22px; padding: 0 5px; font-size: 8px; }
+.camera-key-editor .range-field { grid-template-columns: 50px 1fr 44px; gap: 6px; font-size: 8px; }
+.camera-key-editor .range-field output { font-size: 8px; }
 .camera-keyframe-button { grid-column: 3; grid-row: 2; }
 .object-track-label { grid-column: 1; grid-row: 3; border-color: rgba(112,182,158,.24); color: #acd3c5; }
 .object-track-slot { grid-column: 2; grid-row: 3; min-width: 0; }
